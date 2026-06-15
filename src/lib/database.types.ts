@@ -30,6 +30,10 @@ export interface Database {
           id: number
           festival_name: string
           festival_date: string | null
+          festival_start: string | null
+          num_days: number
+          daily_rate: number
+          guest_daily_rate: number
           location: string | null
           bank_name: string | null
           bank_iban: string | null
@@ -40,6 +44,10 @@ export interface Database {
         Insert: {
           festival_name?: string
           festival_date?: string | null
+          festival_start?: string | null
+          num_days?: number
+          daily_rate?: number
+          guest_daily_rate?: number
           location?: string | null
           bank_name?: string | null
           bank_iban?: string | null
@@ -50,12 +58,33 @@ export interface Database {
         Update: {
           festival_name?: string
           festival_date?: string | null
+          festival_start?: string | null
+          num_days?: number
+          daily_rate?: number
+          guest_daily_rate?: number
           location?: string | null
           bank_name?: string | null
           bank_iban?: string | null
           bank_recipient?: string | null
           payment_deadline?: string | null
           notes?: string | null
+        }
+      }
+      attendance: {
+        Row: {
+          id: string
+          user_id: string
+          day_index: number
+          present: boolean
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          day_index: number
+          present?: boolean
+        }
+        Update: {
+          present?: boolean
         }
       }
       cost_items: {
@@ -114,3 +143,4 @@ export type Profile = Database['public']['Tables']['profiles']['Row']
 export type FestivalConfig = Database['public']['Tables']['festival_config']['Row']
 export type CostItem = Database['public']['Tables']['cost_items']['Row']
 export type ParticipantPayment = Database['public']['Tables']['participant_payments']['Row']
+export type Attendance = Database['public']['Tables']['attendance']['Row']
