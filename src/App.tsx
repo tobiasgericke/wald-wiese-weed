@@ -8,7 +8,7 @@ import { AdminDashboard } from './pages/AdminDashboard'
 
 export default function App() {
   return (
-    <BrowserRouter basename="/festival-app">
+    <BrowserRouter basename="/wald-wiese-weed">
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
