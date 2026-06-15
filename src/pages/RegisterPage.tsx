@@ -15,22 +15,20 @@ export function RegisterPage() {
     setError(null)
     setLoading(true)
 
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
-
-    if (signUpError || !data.user) {
-      setError(signUpError?.message ?? 'Registrierung fehlgeschlagen.')
-      setLoading(false)
-      return
-    }
-
-    const { error: profileError } = await supabase.from('profiles').insert({
-      id: data.user.id,
+    const { error: signUpError } = await supabase.auth.signUp({
       email,
-      name,
+      password,
+      options: { data: { name } },
     })
 
-    if (profileError) {
-      setError('Profil konnte nicht erstellt werden.')
+    if (signUpError) {
+      const msg = signUpError.message
+      if (msg.includes('after')) {
+        const seconds = msg.match(/\d+/)?.[0]
+        setError(`Zu viele Versuche. Bitte ${seconds ? `${seconds} Sekunden` : 'kurz'} warten.`)
+      } else {
+        setError('Registrierung fehlgeschlagen. Bitte versuche es erneut.')
+      }
       setLoading(false)
       return
     }
