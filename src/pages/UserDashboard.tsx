@@ -14,8 +14,8 @@ export function UserDashboard() {
     if (!user) return
 
     Promise.all([
-      supabase.from('festival_config').select('*').eq('id', 1).single(),
-      supabase.from('participant_payments').select('*').eq('user_id', user.id).single(),
+      supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('participant_payments').select('*').eq('user_id', user.id).maybeSingle(),
     ]).then(([{ data: cfg }, { data: pay }]) => {
       setConfig(cfg)
       setPayment(pay)

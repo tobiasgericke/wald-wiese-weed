@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
       .then(({ data }) => {
         setProfile(data)
         setLoading(false)

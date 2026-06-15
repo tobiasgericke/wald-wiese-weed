@@ -56,6 +56,14 @@ returns boolean language sql security invoker stable as $$
   )
 $$;
 
+-- Grants (ohne diese bekommen alle Anfragen 403 trotz RLS-Policies)
+grant select, insert, update, delete on public.profiles to authenticated;
+grant select, insert, update, delete on public.festival_config to authenticated;
+grant select, insert, update, delete on public.cost_items to authenticated;
+grant select, insert, update, delete on public.participant_payments to authenticated;
+grant select, insert, update, delete on public.attendance to authenticated;
+grant execute on function public.is_admin() to authenticated;
+
 -- Profiles
 create policy "profiles_select_own" on public.profiles for select to authenticated using ((select auth.uid()) = id);
 create policy "profiles_insert_own" on public.profiles for insert to authenticated with check ((select auth.uid()) = id);

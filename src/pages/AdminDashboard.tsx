@@ -22,7 +22,7 @@ export function AdminDashboard() {
       await Promise.all([
         supabase.from('profiles').select('*').order('name'),
         supabase.from('cost_items').select('*').order('created_at'),
-        supabase.from('festival_config').select('*').eq('id', 1).single(),
+        supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
         supabase.from('participant_payments').select('*'),
         supabase.from('attendance').select('*'),
       ])
