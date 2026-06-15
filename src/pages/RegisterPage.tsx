@@ -26,6 +26,10 @@ export function RegisterPage() {
       if (msg.includes('after')) {
         const seconds = msg.match(/\d+/)?.[0]
         setError(`Zu viele Versuche. Bitte ${seconds ? `${seconds} Sekunden` : 'kurz'} warten.`)
+      } else if (msg.includes('rate limit')) {
+        setError('Zu viele Registrierungsversuche. Bitte ein paar Minuten warten.')
+      } else if (msg.includes('already registered') || msg.includes('already been registered')) {
+        setError('Diese E-Mail-Adresse ist bereits registriert. Bitte anmelden.')
       } else {
         setError('Registrierung fehlgeschlagen. Bitte versuche es erneut.')
       }
