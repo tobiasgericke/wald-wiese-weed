@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute'
 import { LoginPage } from './pages/LoginPage'
@@ -8,7 +8,7 @@ import { AdminDashboard } from './pages/AdminDashboard'
 
 export default function App() {
   return (
-    <BrowserRouter basename="/wald-wiese-weed">
+    <HashRouter>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -34,6 +34,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
