@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Navbar } from '../components/Navbar'
-import type { FestivalConfig, ParticipantPayment } from '../lib/database.types'
+import type { FestivalConfig, ParticipantPayment, Attendance } from '../lib/database.types'
 
 export function UserDashboard() {
   const { user, profile } = useAuth()
   const [config, setConfig] = useState<FestivalConfig | null>(null)
   const [payment, setPayment] = useState<ParticipantPayment | null>(null)
+  const [attendance, setAttendance] = useState<Attendance[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -16,9 +17,11 @@ export function UserDashboard() {
     Promise.all([
       supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
       supabase.from('participant_payments').select('*').eq('user_id', user.id).maybeSingle(),
-    ]).then(([{ data: cfg }, { data: pay }]) => {
+      supabase.from('attendance').select('*').eq('user_id', user.id),
+    ]).then(([{ data: cfg }, { data: pay }, { data: att }]) => {
       setConfig(cfg)
       setPayment(pay)
+      setAttendance(att ?? [])
       setLoading(false)
     })
   }, [user])
@@ -34,6 +37,10 @@ export function UserDashboard() {
     )
   }
 
+  const numDays = config?.num_days ?? 4
+  const dailyRate = config?.daily_rate ?? 25
+  const daysPresent = attendance.filter(a => a.present && a.day_index < numDays).length
+  const estimatedCost = daysPresent * dailyRate
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
   return (
@@ -48,7 +55,9 @@ export function UserDashboard() {
             <h2 className="text-lg font-semibold text-indigo-400">Festival-Infos</h2>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <Info label="Name" value={config.festival_name} />
-              <Info label="Datum" value={config.festival_date ? formatDate(config.festival_date) : '—'} />
+              {config.festival_start && (
+                <Info label="Datum" value={formatDateRange(config.festival_start, numDays)} />
+              )}
               <Info label="Ort" value={config.location ?? '—'} />
               {config.payment_deadline && (
                 <Info label="Zahlungsdeadline" value={formatDate(config.payment_deadline)} />
@@ -62,9 +71,34 @@ export function UserDashboard() {
           </section>
         )}
 
+        {/* Attendance */}
+        {config && (
+          <AttendanceSection
+            user={user!}
+            config={config}
+            attendance={attendance}
+            onUpdate={setAttendance}
+          />
+        )}
+
+        {/* Cost Preview */}
+        {config && (
+          <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-indigo-400">Kostenvorschau</h2>
+            <div className="grid grid-cols-3 gap-3">
+              <StatCard label="Deine Tage" value={daysPresent.toString()} />
+              <StatCard label={`${formatEur(dailyRate)} / Tag`} value="Tagessatz" small />
+              <StatCard label="Geschätzte Kosten" value={formatEur(estimatedCost)} color="indigo" />
+            </div>
+            <p className="text-xs text-gray-500">
+              Der endgültige Betrag wird nach dem Festival aus den tatsächlichen Gesamtkosten berechnet.
+            </p>
+          </section>
+        )}
+
         {/* Payment Status */}
         <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-indigo-400">Dein Zahlungsstatus</h2>
+          <h2 className="text-lg font-semibold text-indigo-400">Zahlungsstatus</h2>
 
           {payment ? (
             <>
@@ -77,7 +111,6 @@ export function UserDashboard() {
                   color={remaining > 0 ? 'red' : 'green'}
                 />
               </div>
-
               <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${
                 payment.paid
                   ? 'bg-green-900/40 text-green-400 border border-green-800'
@@ -85,13 +118,10 @@ export function UserDashboard() {
               }`}>
                 {payment.paid ? '✅ Vollständig bezahlt' : '⏳ Zahlung ausstehend'}
               </div>
-
-              {payment.notes && (
-                <p className="text-sm text-gray-400">{payment.notes}</p>
-              )}
+              {payment.notes && <p className="text-sm text-gray-400">{payment.notes}</p>}
             </>
           ) : (
-            <p className="text-sm text-gray-500">Noch keine Zahlungsinfos vorhanden. Wende dich an den Admin.</p>
+            <p className="text-sm text-gray-500">Noch keine Zahlungsinfos hinterlegt.</p>
           )}
         </section>
 
@@ -116,6 +146,90 @@ export function UserDashboard() {
   )
 }
 
+// ─── Attendance Section ──────────────────────────────────────────────────────
+
+function AttendanceSection({
+  user,
+  config,
+  attendance,
+  onUpdate,
+}: {
+  user: { id: string }
+  config: FestivalConfig
+  attendance: Attendance[]
+  onUpdate: (att: Attendance[]) => void
+}) {
+  const [saving, setSaving] = useState<number | null>(null)
+  const numDays = config.num_days ?? 4
+
+  const dayLabels = Array.from({ length: numDays }, (_, i) => getDayLabel(config, i))
+
+  const isPresent = (dayIndex: number) =>
+    attendance.find(a => a.day_index === dayIndex)?.present ?? false
+
+  const toggle = async (dayIndex: number) => {
+    setSaving(dayIndex)
+    const existing = attendance.find(a => a.day_index === dayIndex)
+    const nowPresent = !isPresent(dayIndex)
+
+    if (existing) {
+      await supabase.from('attendance').update({ present: nowPresent }).eq('id', existing.id)
+      onUpdate(attendance.map(a => a.day_index === dayIndex ? { ...a, present: nowPresent } : a))
+    } else {
+      const { data } = await supabase
+        .from('attendance')
+        .insert({ user_id: user.id, day_index: dayIndex, present: true })
+        .select()
+        .single()
+      if (data) onUpdate([...attendance, data])
+    }
+    setSaving(null)
+  }
+
+  return (
+    <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-indigo-400">Meine Anwesenheit</h2>
+        <p className="text-xs text-gray-500 mt-1">An welchen Tagen bist du dabei?</p>
+      </div>
+      <div className="flex gap-3 flex-wrap">
+        {dayLabels.map((label, i) => {
+          const present = isPresent(i)
+          return (
+            <button
+              key={i}
+              onClick={() => toggle(i)}
+              disabled={saving === i}
+              className={`flex flex-col items-center px-5 py-3 rounded-xl border-2 font-medium transition-all ${
+                saving === i
+                  ? 'opacity-50 cursor-wait border-gray-700 bg-gray-800'
+                  : present
+                    ? 'border-indigo-500 bg-indigo-600/20 text-indigo-300'
+                    : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500'
+              }`}
+            >
+              <span className="text-lg">{present ? '✓' : '+'}</span>
+              <span className="text-sm mt-0.5">{label}</span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getDayLabel(config: FestivalConfig, dayIndex: number): string {
+  const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+  if (config.festival_start) {
+    const d = new Date(config.festival_start)
+    d.setDate(d.getDate() + dayIndex)
+    return weekdays[d.getDay()] + ' ' + d.getDate() + '.'
+  }
+  return `Tag ${dayIndex + 1}`
+}
+
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
@@ -125,12 +239,18 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
   )
 }
 
-function StatCard({ label, value, color }: { label: string; value: string; color?: 'green' | 'red' }) {
-  const textColor = color === 'green' ? 'text-green-400' : color === 'red' ? 'text-red-400' : 'text-white'
+function StatCard({ label, value, color, small }: {
+  label: string; value: string; color?: 'green' | 'red' | 'indigo'; small?: boolean
+}) {
+  const textColor =
+    color === 'green' ? 'text-green-400' :
+    color === 'red' ? 'text-red-400' :
+    color === 'indigo' ? 'text-indigo-400' :
+    'text-white'
   return (
     <div className="bg-gray-800 rounded-lg p-3 text-center">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-lg font-bold ${textColor}`}>{value}</p>
+      <p className={`text-gray-500 mb-1 ${small ? 'text-xs' : 'text-xs'}`}>{label}</p>
+      <p className={`font-bold ${small ? 'text-sm' : 'text-lg'} ${textColor}`}>{value}</p>
     </div>
   )
 }
@@ -141,4 +261,12 @@ function formatEur(amount: number) {
 
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })
+}
+
+function formatDateRange(startStr: string, numDays: number): string {
+  const start = new Date(startStr)
+  const end = new Date(startStr)
+  end.setDate(end.getDate() + numDays - 1)
+  const opts: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'long' }
+  return `${start.toLocaleDateString('de-DE', opts)} – ${end.toLocaleDateString('de-DE', { ...opts, year: 'numeric' })}`
 }

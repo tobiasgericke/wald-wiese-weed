@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Navbar } from '../components/Navbar'
 import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance } from '../lib/database.types'
@@ -70,7 +71,12 @@ export function AdminDashboard() {
     <>
       <Navbar />
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-        <h1 className="text-2xl font-bold">Admin-Dashboard</h1>
+        <div className="flex items-center gap-4">
+          <Link to="/dashboard" className="text-sm text-gray-400 hover:text-white transition-colors">
+            ← Dashboard
+          </Link>
+          <h1 className="text-2xl font-bold">Admin-Dashboard</h1>
+        </div>
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
