@@ -4,16 +4,44 @@ import { useAuth } from '../contexts/AuthContext'
 import { Navbar } from '../components/Navbar'
 import type { FestivalConfig, ParticipantPayment, Attendance } from '../lib/database.types'
 
+type View = 'planning' | 'calculating' | 'confirmed'
+
+const scrollTo = (id: string) =>
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+
 export function UserDashboard() {
   const { user, profile } = useAuth()
   const [config, setConfig] = useState<FestivalConfig | null>(null)
   const [payment, setPayment] = useState<ParticipantPayment | null>(null)
   const [attendance, setAttendance] = useState<Attendance[]>([])
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<View>('planning')
+  const [activeSection, setActiveSection] = useState('sec-festival')
+
+  useEffect(() => {
+    document.documentElement.classList.add('snap-page')
+    return () => document.documentElement.classList.remove('snap-page')
+  }, [])
+
+  useEffect(() => {
+    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status']
+    const observer = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) setActiveSection(entry.target.id)
+        })
+      },
+      { threshold: 0.4 }
+    )
+    ids.forEach(id => {
+      const el = document.getElementById(id)
+      if (el) observer.observe(el)
+    })
+    return () => observer.disconnect()
+  }, [view])
 
   useEffect(() => {
     if (!user) return
-
     Promise.all([
       supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
       supabase.from('participant_payments').select('*').eq('user_id', user.id).maybeSingle(),
@@ -23,15 +51,32 @@ export function UserDashboard() {
       setPayment(pay)
       setAttendance(att ?? [])
       setLoading(false)
+      const alreadyConfirmed = localStorage.getItem(`wwwConfirmed_${user.id}`)
+      if (alreadyConfirmed || pay) setView('confirmed')
     })
   }, [user])
+
+  const handleAttendanceUpdate = (att: Attendance[]) => {
+    setAttendance(att)
+    if (view === 'confirmed') setView('planning')
+  }
+
+  const handleConfirm = () => {
+    setView('calculating')
+    scrollTo('sec-action')
+    setTimeout(() => {
+      setView('confirmed')
+      if (user) localStorage.setItem(`wwwConfirmed_${user.id}`, '1')
+      setTimeout(() => scrollTo('sec-zahlung'), 100)
+    }, 2800)
+  }
 
   if (loading) {
     return (
       <>
         <Navbar />
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-indigo-500" />
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500" />
         </div>
       </>
     )
@@ -43,106 +88,358 @@ export function UserDashboard() {
   const estimatedCost = daysPresent * dailyRate
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
+  const navLinks: { id: string; label: string }[] = [
+    { id: 'sec-festival', label: 'Festival' },
+    { id: 'sec-anwesenheit', label: 'Anwesenheit' },
+    { id: 'sec-kosten', label: 'Kosten' },
+    { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
+    ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
+  ]
+
   return (
     <>
       <Navbar />
-      <main className="max-w-2xl mx-auto px-4 py-8 space-y-6">
-        <h1 className="text-2xl font-bold">Hey, {profile?.name} 👋</h1>
 
-        {/* Festival Info */}
-        {config && (
-          <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3">
-            <h2 className="text-lg font-semibold text-indigo-400">Festival-Infos</h2>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <Info label="Name" value={config.festival_name} />
-              {config.festival_start && (
-                <Info label="Datum" value={formatDateRange(config.festival_start, numDays)} />
-              )}
-              <Info label="Ort" value={config.location ?? '—'} />
-              {config.payment_deadline && (
-                <Info label="Zahlungsdeadline" value={formatDate(config.payment_deadline)} />
-              )}
-            </div>
-            {config.notes && (
-              <p className="text-sm text-gray-400 border-t border-gray-800 pt-3 mt-3">
-                {config.notes}
-              </p>
-            )}
-          </section>
-        )}
+      {/* ── Fixed sidebar ───────────────────────────────────── */}
+      <aside className="fixed left-6 top-1/2 -translate-y-1/2 z-20 hidden md:flex flex-col gap-4">
+        {navLinks.map(link => (
+          <button
+            key={link.id}
+            onClick={() => scrollTo(link.id)}
+            className="flex items-center gap-2.5 group text-left"
+          >
+            <span className={`block w-1.5 h-1.5 rounded-full transition-all duration-300 ${
+              activeSection === link.id
+                ? 'bg-green-400 scale-150'
+                : 'bg-gray-600 group-hover:bg-gray-400'
+            }`} />
+            <span className={`text-xs transition-colors duration-300 ${
+              activeSection === link.id
+                ? 'text-green-400 font-semibold'
+                : 'text-gray-500 group-hover:text-gray-300'
+            }`}>
+              {link.label}
+            </span>
+          </button>
+        ))}
+      </aside>
 
-        {/* Attendance */}
-        {config && (
-          <AttendanceSection
-            user={user!}
-            config={config}
-            attendance={attendance}
-            onUpdate={setAttendance}
-          />
-        )}
+      {/* ── Sections ────────────────────────────────────────── */}
+      <div className="max-w-2xl mx-auto px-4">
 
-        {/* Cost Preview */}
-        {config && (
-          <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
-            <h2 className="text-lg font-semibold text-indigo-400">Kostenvorschau</h2>
-            <div className="grid grid-cols-3 gap-3">
-              <StatCard label="Deine Tage" value={daysPresent.toString()} />
-              <StatCard label={`${formatEur(dailyRate)} / Tag`} value="Tagessatz" small />
-              <StatCard label="Geschätzte Kosten" value={formatEur(estimatedCost)} color="indigo" />
-            </div>
-            <p className="text-xs text-gray-500">
-              Der endgültige Betrag wird nach dem Festival aus den tatsächlichen Gesamtkosten berechnet.
-            </p>
-          </section>
-        )}
-
-        {/* Payment Status */}
-        <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-indigo-400">Zahlungsstatus</h2>
-
-          {payment ? (
-            <>
-              <div className="grid grid-cols-3 gap-3">
-                <StatCard label="Zu zahlen" value={formatEur(payment.amount_due)} />
-                <StatCard label="Bezahlt" value={formatEur(payment.amount_paid)} color="green" />
-                <StatCard
-                  label="Offen"
-                  value={formatEur(remaining)}
-                  color={remaining > 0 ? 'red' : 'green'}
-                />
+        {/* ── 0. Festival Info ────────────────────────────────── */}
+        <section id="sec-festival" className="snap-section">
+          {config ? (
+            <div className="space-y-8">
+              <div className="space-y-3">
+                <h1 className="text-5xl font-black tracking-tight bg-gradient-to-r from-green-400 to-yellow-300 bg-clip-text text-transparent leading-tight">
+                  {config.festival_name}
+                </h1>
+                {config.festival_start && (
+                  <p className="text-yellow-300 text-lg font-semibold">
+                    {formatDateRange(config.festival_start, numDays)}
+                  </p>
+                )}
+                {config.location && (
+                  <p className="text-gray-300 text-base">{config.location}</p>
+                )}
               </div>
-              <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${
-                payment.paid
-                  ? 'bg-green-900/40 text-green-400 border border-green-800'
-                  : 'bg-yellow-900/40 text-yellow-400 border border-yellow-800'
-              }`}>
-                {payment.paid ? '✅ Vollständig bezahlt' : '⏳ Zahlung ausstehend'}
+
+              <div className="space-y-3 border-l-2 border-forest-600 pl-5">
+                {config.daily_rate && (
+                  <InfoLine label="Tagessatz" value={`${formatEur(config.daily_rate)} / Tag`} />
+                )}
+                {config.payment_deadline && (
+                  <InfoLine label="Zahlungsdeadline" value={formatDate(config.payment_deadline)} highlight />
+                )}
               </div>
-              {payment.notes && <p className="text-sm text-gray-400">{payment.notes}</p>}
-            </>
+
+              {config.notes && (
+                <p className="text-gray-300 text-sm leading-relaxed italic border-t border-forest-700 pt-5">
+                  {config.notes}
+                </p>
+              )}
+
+              <button
+                onClick={() => scrollTo('sec-anwesenheit')}
+                className="text-sm text-gray-400 hover:text-green-400 transition-colors"
+              >
+                Zur Anwesenheit ↓
+              </button>
+            </div>
           ) : (
-            <p className="text-sm text-gray-500">Noch keine Zahlungsinfos hinterlegt.</p>
+            <div className="space-y-4">
+              <h1 className="text-5xl font-black bg-gradient-to-r from-green-400 to-yellow-300 bg-clip-text text-transparent">
+                Wald Wiese Weed
+              </h1>
+              <p className="text-gray-400">Festival noch nicht konfiguriert.</p>
+            </div>
           )}
         </section>
 
-        {/* Bank Details */}
-        {config?.bank_iban && (
-          <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3">
-            <h2 className="text-lg font-semibold text-indigo-400">Bankverbindung</h2>
-            <div className="grid grid-cols-1 gap-2 text-sm">
-              <Info label="Empfänger" value={config.bank_recipient ?? '—'} />
-              <Info label="Bank" value={config.bank_name ?? '—'} />
-              <Info label="IBAN" value={config.bank_iban} mono />
-            </div>
-            {payment && remaining > 0 && (
-              <p className="text-xs text-gray-500 pt-2">
-                Verwendungszweck: <span className="font-mono text-gray-300">Festival {profile?.name}</span>
+        {/* ── 1. Anwesenheit ──────────────────────────────────── */}
+        <section id="sec-anwesenheit" className="snap-section">
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-black text-white leading-tight">
+                {profile?.name},<br />wann bist du dabei?
+              </h2>
+              <p className="text-gray-400 text-sm mt-2">
+                Tippe auf die Tage an denen du anwesend bist.
               </p>
+            </div>
+
+            {config ? (
+              <AttendanceSection
+                user={user!}
+                config={config}
+                attendance={attendance}
+                onUpdate={handleAttendanceUpdate}
+              />
+            ) : (
+              <div className="card">
+                <div className="card-body py-6 text-center text-sm text-gray-400">
+                  Festival noch nicht konfiguriert.
+                </div>
+              </div>
             )}
+
+            <button
+              onClick={() => scrollTo('sec-kosten')}
+              className="text-sm text-gray-400 hover:text-green-400 transition-colors"
+            >
+              Kostenvorschau ansehen ↓
+            </button>
+          </div>
+        </section>
+
+        {/* ── 2. Kostenvorschau ───────────────────────────────── */}
+        <section id="sec-kosten" className="snap-section">
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-black text-white">Kostenvorschau</h2>
+              <p className="text-gray-400 text-sm mt-2">
+                Basierend auf deinen Tagen und dem Tagessatz.
+              </p>
+            </div>
+
+            <div className="card">
+              <div className="card-body">
+                <div className="grid grid-cols-3 gap-3">
+                  <StatCard label="Deine Tage" value={daysPresent.toString()} />
+                  <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
+                  <StatCard label="Geschätzte Kosten" value={formatEur(estimatedCost)} color="yellow" />
+                </div>
+                <p className="text-xs text-gray-400">
+                  Endgültiger Betrag wird nach dem Festival aus den tatsächlichen Gesamtkosten berechnet.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => scrollTo('sec-action')}
+              className="text-sm text-gray-400 hover:text-green-400 transition-colors"
+            >
+              {view === 'confirmed' ? 'Zur Überweisung ↓' : 'Zur Bestätigung ↓'}
+            </button>
+          </div>
+        </section>
+
+        {/* ── 3a. Bestätigung / Skeleton (planning & calculating) */}
+        {(view === 'planning' || view === 'calculating') && (
+          <section id="sec-action" className="snap-section">
+            <div className="space-y-6">
+              {view === 'planning' ? (
+                <>
+                  <div>
+                    <h2 className="text-3xl font-black text-white">Alles klar?</h2>
+                    <p className="text-gray-400 text-sm mt-2">
+                      Bestätige deine Anwesenheit damit wir planen können.
+                    </p>
+                  </div>
+                  <div className="card">
+                    <div className="card-body py-12 flex flex-col items-center text-center gap-6">
+                      <div className="space-y-2">
+                        <p className="text-white font-semibold text-xl">
+                          {daysPresent === 0
+                            ? 'Keine Tage ausgewählt'
+                            : `${daysPresent} ${daysPresent === 1 ? 'Tag' : 'Tage'} · ${formatEur(estimatedCost)}`
+                          }
+                        </p>
+                        <p className="text-gray-400 text-sm">
+                          {daysPresent === 0
+                            ? 'Scroll zurück und wähle zuerst deine Tage aus.'
+                            : 'Stimmt das so? Dann bestätigen.'
+                          }
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleConfirm}
+                        disabled={daysPresent === 0}
+                        className="bg-green-700 hover:bg-green-600 disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold py-3.5 px-12 rounded-2xl transition-all text-base tracking-wide"
+                      >
+                        Anwesenheit bestätigen →
+                      </button>
+                      <button
+                        onClick={() => scrollTo('sec-anwesenheit')}
+                        className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                      >
+                        Zurück zur Auswahl
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <h2 className="text-3xl font-black text-white">Wird berechnet…</h2>
+                    <p className="text-gray-400 text-sm mt-2">Einen Moment.</p>
+                  </div>
+                  <PaymentSkeleton />
+                </>
+              )}
+            </div>
           </section>
         )}
-      </main>
+
+        {/* ── 3b. Überweisung: Betrag + Bankdaten (confirmed) ── */}
+        {view === 'confirmed' && (
+          <section id="sec-action" className="snap-section">
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-black text-white">Überweisung</h2>
+                <p className="text-gray-400 text-sm mt-2">
+                  {payment
+                    ? 'Das ist dein festgelegter Betrag.'
+                    : 'Geschätzter Betrag auf Basis deiner Tage.'}
+                </p>
+              </div>
+
+              {/* Amount */}
+              <div className="card">
+                <div className="card-body">
+                  <div className="grid grid-cols-3 gap-3">
+                    {payment ? (
+                      <>
+                        <StatCard label="Zu zahlen" value={formatEur(payment.amount_due)} />
+                        <StatCard label="Bezahlt" value={formatEur(payment.amount_paid)} color="green" />
+                        <StatCard
+                          label="Offen"
+                          value={formatEur(remaining)}
+                          color={remaining > 0 ? 'red' : 'green'}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <StatCard label="Deine Tage" value={daysPresent.toString()} />
+                        <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
+                        <StatCard label="Erwartete Kosten" value={formatEur(estimatedCost)} color="yellow" />
+                      </>
+                    )}
+                  </div>
+                  {payment?.notes && (
+                    <p className="text-sm text-gray-300">{payment.notes}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Bank details */}
+              {config?.bank_iban && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="card-title">Bankverbindung</h3>
+                  </div>
+                  <div className="card-body pt-4 space-y-3">
+                    <InfoRow label="Empfänger" value={config.bank_recipient ?? '—'} />
+                    <InfoRow label="Bank" value={config.bank_name ?? '—'} />
+                    <InfoRow label="IBAN" value={config.bank_iban} mono />
+                    {payment && remaining > 0 && (
+                      <div className="border-t border-forest-700 pt-3">
+                        <p className="text-xs text-gray-400 mb-1">Verwendungszweck</p>
+                        <p className="font-mono text-sm text-gray-200">Festival {profile?.name}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => scrollTo('sec-status')}
+                  className="text-sm text-gray-400 hover:text-green-400 transition-colors"
+                >
+                  Zum Zahlungsstatus ↓
+                </button>
+                <button
+                  onClick={() => {
+                    setView('planning')
+                    setTimeout(() => scrollTo('sec-anwesenheit'), 50)
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  Anwesenheit anpassen
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ── 4. Zahlungsstatus (confirmed) ───────────────────── */}
+        {view === 'confirmed' && (
+          <section id="sec-status" className="snap-section">
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-black text-white">Zahlungsstatus</h2>
+                <p className="text-gray-400 text-sm mt-2">
+                  Hier siehst du ob deine Zahlung bei uns angekommen ist.
+                </p>
+              </div>
+
+              <div className="card">
+                <div className="card-body">
+                  {payment ? (
+                    <div className={payment.paid ? 'badge-paid' : 'badge-pending'}>
+                      {payment.paid
+                        ? '✅ Zahlung eingegangen — alles erledigt!'
+                        : '⏳ Noch nicht eingegangen — wir geben Bescheid'}
+                    </div>
+                  ) : (
+                    <div className="badge-pending">
+                      ⏳ Betrag noch nicht festgelegt — wird nach dem Festival berechnet
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400 mt-2">
+                    Die Admins markieren deine Zahlung sobald sie auf dem Konto eingegangen ist.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+      </div>
     </>
+  )
+}
+
+// ─── Skeleton ────────────────────────────────────────────────────────────────
+
+function PaymentSkeleton() {
+  return (
+    <div className="card">
+      <div className="card-body space-y-4">
+        <div className="grid grid-cols-3 gap-3">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="stat-card flex flex-col items-center gap-2 py-5">
+              <div className="shimmer h-3 w-16 rounded" />
+              <div className="shimmer h-7 w-24 rounded-lg" />
+            </div>
+          ))}
+        </div>
+        <div className="shimmer h-14 w-full rounded-xl" />
+        <div className="shimmer h-3 w-48 rounded" />
+      </div>
+    </div>
   )
 }
 
@@ -161,7 +458,6 @@ function AttendanceSection({
 }) {
   const [saving, setSaving] = useState<number | null>(null)
   const numDays = config.num_days ?? 4
-
   const dayLabels = Array.from({ length: numDays }, (_, i) => getDayLabel(config, i))
 
   const isPresent = (dayIndex: number) =>
@@ -171,7 +467,6 @@ function AttendanceSection({
     setSaving(dayIndex)
     const existing = attendance.find(a => a.day_index === dayIndex)
     const nowPresent = !isPresent(dayIndex)
-
     if (existing) {
       await supabase.from('attendance').update({ present: nowPresent }).eq('id', existing.id)
       onUpdate(attendance.map(a => a.day_index === dayIndex ? { ...a, present: nowPresent } : a))
@@ -187,38 +482,76 @@ function AttendanceSection({
   }
 
   return (
-    <section className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold text-indigo-400">Meine Anwesenheit</h2>
-        <p className="text-xs text-gray-500 mt-1">An welchen Tagen bist du dabei?</p>
+    <div className="card">
+      <div className="card-body">
+        <div className="flex gap-3 flex-wrap">
+          {dayLabels.map((label, i) => {
+            const present = isPresent(i)
+            return (
+              <button
+                key={i}
+                onClick={() => toggle(i)}
+                disabled={saving === i}
+                className={`flex flex-col items-center px-5 py-4 rounded-2xl border-2 font-medium transition-all min-w-[64px] ${
+                  saving === i
+                    ? 'opacity-50 cursor-wait border-forest-600 bg-forest-800'
+                    : present
+                      ? 'border-green-500 bg-green-900/30 text-green-300 shadow-lg shadow-green-900/20'
+                      : 'border-forest-600 bg-forest-800 text-gray-400 hover:border-forest-500 hover:text-gray-200'
+                }`}
+              >
+                <span className="text-base font-bold">{present ? '✓' : '+'}</span>
+                <span className="text-xs mt-1">{label}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
-      <div className="flex gap-3 flex-wrap">
-        {dayLabels.map((label, i) => {
-          const present = isPresent(i)
-          return (
-            <button
-              key={i}
-              onClick={() => toggle(i)}
-              disabled={saving === i}
-              className={`flex flex-col items-center px-5 py-3 rounded-xl border-2 font-medium transition-all ${
-                saving === i
-                  ? 'opacity-50 cursor-wait border-gray-700 bg-gray-800'
-                  : present
-                    ? 'border-indigo-500 bg-indigo-600/20 text-indigo-300'
-                    : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500'
-              }`}
-            >
-              <span className="text-lg">{present ? '✓' : '+'}</span>
-              <span className="text-sm mt-0.5">{label}</span>
-            </button>
-          )
-        })}
-      </div>
-    </section>
+    </div>
   )
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</p>
+      <p className={`text-white font-medium ${mono ? 'font-mono text-sm' : ''}`}>{value}</p>
+    </div>
+  )
+}
+
+function InfoLine({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <span className="text-xs text-gray-400 uppercase tracking-wide w-32 shrink-0">{label}</span>
+      <span className={`text-sm font-medium ${highlight ? 'text-yellow-300' : 'text-gray-200'}`}>{value}</span>
+    </div>
+  )
+}
+
+function StatCard({ label, value, sub, color }: {
+  label: string
+  value: string
+  sub?: string
+  color?: 'green' | 'red' | 'yellow'
+}) {
+  const textColor =
+    color === 'green' ? 'text-green-400' :
+    color === 'red' ? 'text-red-400' :
+    color === 'yellow' ? 'text-yellow-300' :
+    'text-white'
+  return (
+    <div className="stat-card">
+      <p className="stat-label">{label}</p>
+      <p className={`stat-value ${textColor}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+// ─── Formatters ───────────────────────────────────────────────────────────────
 
 function getDayLabel(config: FestivalConfig, dayIndex: number): string {
   const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
@@ -228,31 +561,6 @@ function getDayLabel(config: FestivalConfig, dayIndex: number): string {
     return weekdays[d.getDay()] + ' ' + d.getDate() + '.'
   }
   return `Tag ${dayIndex + 1}`
-}
-
-function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <span className="text-gray-500 block text-xs mb-0.5">{label}</span>
-      <span className={`text-white ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
-    </div>
-  )
-}
-
-function StatCard({ label, value, color, small }: {
-  label: string; value: string; color?: 'green' | 'red' | 'indigo'; small?: boolean
-}) {
-  const textColor =
-    color === 'green' ? 'text-green-400' :
-    color === 'red' ? 'text-red-400' :
-    color === 'indigo' ? 'text-indigo-400' :
-    'text-white'
-  return (
-    <div className="bg-gray-800 rounded-lg p-3 text-center">
-      <p className={`text-gray-500 mb-1 ${small ? 'text-xs' : 'text-xs'}`}>{label}</p>
-      <p className={`font-bold ${small ? 'text-sm' : 'text-lg'} ${textColor}`}>{value}</p>
-    </div>
-  )
 }
 
 function formatEur(amount: number) {

@@ -54,7 +54,7 @@ export function AdminDashboard() {
       <>
         <Navbar />
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-indigo-500" />
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500" />
         </div>
       </>
     )
@@ -72,14 +72,14 @@ export function AdminDashboard() {
       <Navbar />
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         <div className="flex items-center gap-4">
-          <Link to="/dashboard" className="text-sm text-gray-400 hover:text-white transition-colors">
+          <Link to="/dashboard" className="text-sm text-gray-500 hover:text-gray-300 transition-colors">
             ← Dashboard
           </Link>
-          <h1 className="text-2xl font-bold">Admin-Dashboard</h1>
+          <h1 className="text-2xl font-bold">Admin</h1>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <SummaryCard label="Teilnehmer" value={participants.length.toString()} />
           <SummaryCard label="Personentage" value={totalPersonDays.toString()} />
           <SummaryCard label="Gesamtkosten" value={formatEur(totalCosts)} />
@@ -92,14 +92,12 @@ export function AdminDashboard() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-gray-900 p-1 rounded-lg w-fit flex-wrap">
+        <div className="tab-bar">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                tab === t.key ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
+              className={`tab-btn ${tab === t.key ? 'tab-active' : 'tab-inactive'}`}
             >
               {t.label}
             </button>
@@ -215,22 +213,22 @@ function ParticipantsTab({
             for (const p of participants) await syncAmountDue(p)
             onRefresh()
           }}
-          className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg text-gray-300 transition-colors"
+          className="btn-ghost"
         >
           Alle Beträge aktualisieren
         </button>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
+      <div className="table-wrapper">
         <table className="w-full text-sm min-w-[600px]">
           <thead>
-            <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase">
-              <th className="text-left px-4 py-3">Name</th>
-              <th className="text-center px-3 py-3">Tage</th>
-              <th className="text-right px-3 py-3">Vorauszahlung</th>
-              <th className="text-right px-3 py-3">Echter Anteil</th>
-              <th className="text-right px-3 py-3 text-green-500">Rückzahlung</th>
-              <th className="text-center px-4 py-3">Status</th>
+            <tr className="border-b border-forest-700 text-left">
+              <th className="th">Name</th>
+              <th className="th text-center">Tage</th>
+              <th className="th text-right">Vorauszahlung</th>
+              <th className="th text-right">Echter Anteil</th>
+              <th className="th text-right text-green-500">Rückzahlung</th>
+              <th className="th text-center">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -240,15 +238,15 @@ function ParticipantsTab({
               const actual = days * actualDailyRate
               const refund = advance - actual
               return (
-                <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                  <td className="px-4 py-3 font-medium">{p.name}</td>
-                  <td className="px-3 py-3 text-center text-gray-300">{days}</td>
-                  <td className="px-3 py-3 text-right">{formatEur(advance)}</td>
-                  <td className="px-3 py-3 text-right text-gray-400">{formatEur(actual)}</td>
-                  <td className={`px-3 py-3 text-right font-medium ${refund > 0 ? 'text-green-400' : refund < 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                <tr key={p.id} className="tr-row">
+                  <td className="td font-medium">{p.name}</td>
+                  <td className="td text-center text-gray-300">{days}</td>
+                  <td className="td text-right">{formatEur(advance)}</td>
+                  <td className="td text-right text-gray-400">{formatEur(actual)}</td>
+                  <td className={`td text-right font-medium ${refund > 0 ? 'text-green-400' : refund < 0 ? 'text-red-400' : 'text-gray-500'}`}>
                     {refund !== 0 ? formatEur(refund) : '—'}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="td text-center">
                     <button
                       onClick={() => togglePaid(p)}
                       className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
@@ -307,38 +305,36 @@ function AttendanceTab({
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-400">
-        Klick auf ein Feld um die Anwesenheit zu togglen.
-      </p>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
+      <p className="text-sm text-gray-400">Klick auf ein Feld um die Anwesenheit zu togglen.</p>
+      <div className="table-wrapper">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase">
-              <th className="text-left px-4 py-3 min-w-[160px]">Name</th>
+            <tr className="border-b border-forest-700 text-left">
+              <th className="th min-w-[160px]">Name</th>
               {dayLabels.map((label, i) => (
-                <th key={i} className="text-center px-4 py-3 min-w-[70px]">{label}</th>
+                <th key={i} className="th text-center min-w-[70px]">{label}</th>
               ))}
-              <th className="text-center px-4 py-3">Tage</th>
+              <th className="th text-center">Tage</th>
             </tr>
           </thead>
           <tbody>
             {participants.map(p => (
-              <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/20">
-                <td className="px-4 py-2.5 font-medium">{p.name}</td>
+              <tr key={p.id} className="tr-row">
+                <td className="td font-medium">{p.name}</td>
                 {dayLabels.map((_, i) => {
                   const present = isPresent(p, i)
                   const key = `${p.id}-${i}`
                   return (
-                    <td key={i} className="px-4 py-2.5 text-center">
+                    <td key={i} className="td text-center">
                       <button
                         onClick={() => toggle(p, i)}
                         disabled={saving === key}
-                        className={`w-8 h-8 rounded-md text-sm font-bold transition-colors ${
+                        className={`w-8 h-8 rounded-lg text-sm font-bold transition-colors ${
                           saving === key
-                            ? 'bg-gray-700 text-gray-500'
+                            ? 'bg-forest-700 text-gray-500'
                             : present
-                              ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                              : 'bg-gray-800 hover:bg-gray-700 text-gray-600'
+                              ? 'bg-green-700 hover:bg-green-600 text-white'
+                              : 'bg-forest-700 hover:bg-forest-600 text-gray-600'
                         }`}
                       >
                         {present ? '✓' : '·'}
@@ -346,19 +342,19 @@ function AttendanceTab({
                     </td>
                   )
                 })}
-                <td className="px-4 py-2.5 text-center font-bold text-indigo-400">
+                <td className="td text-center font-bold text-green-400">
                   {daysPresent(p.attendance, numDays)}
                 </td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr className="bg-gray-800/50 text-xs text-gray-400">
-              <td className="px-4 py-2.5 font-semibold">Gesamt</td>
+            <tr className="bg-forest-800/60 text-xs text-gray-400">
+              <td className="td font-semibold">Gesamt</td>
               {dayTotals.map((total, i) => (
-                <td key={i} className="px-4 py-2.5 text-center font-semibold text-white">{total}</td>
+                <td key={i} className="td text-center font-semibold text-white">{total}</td>
               ))}
-              <td className="px-4 py-2.5 text-center font-bold text-white">
+              <td className="td text-center font-bold text-white">
                 {participants.reduce((s, p) => s + daysPresent(p.attendance, numDays), 0)}
               </td>
             </tr>
@@ -403,44 +399,73 @@ function CostsTab({
 
   return (
     <div className="space-y-4">
-      <form onSubmit={addItem} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col md:flex-row gap-3">
-        <input placeholder="Kostenposition" value={name} onChange={e => setName(e.target.value)} required className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
-        <input placeholder="Beschreibung (optional)" value={description} onChange={e => setDescription(e.target.value)} className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
-        <input type="number" placeholder="Betrag €" value={amount} onChange={e => setAmount(e.target.value)} required min="0" step="0.01" className="w-32 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
-        <button type="submit" disabled={adding} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
-          + Hinzufügen
-        </button>
+      <form onSubmit={addItem} className="card">
+        <div className="card-body">
+          <div className="flex flex-col md:flex-row gap-3">
+            <input
+              placeholder="Kostenposition"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              className="input-sm flex-1"
+            />
+            <input
+              placeholder="Beschreibung (optional)"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              className="input-sm flex-1"
+            />
+            <input
+              type="number"
+              placeholder="Betrag €"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              required
+              min="0"
+              step="0.01"
+              className="input-sm w-32"
+            />
+            <button type="submit" disabled={adding} className="btn-primary whitespace-nowrap px-4 py-2 text-sm">
+              + Hinzufügen
+            </button>
+          </div>
+        </div>
       </form>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="table-wrapper">
         {costItems.length === 0 ? (
-          <p className="text-center text-gray-500 py-8 text-sm">Noch keine Kostenpositionen</p>
+          <p className="text-center text-gray-500 py-10 text-sm">Noch keine Kostenpositionen</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-gray-500 text-xs uppercase">
-                <th className="text-left px-4 py-3">Position</th>
-                <th className="text-left px-4 py-3 hidden md:table-cell">Beschreibung</th>
-                <th className="text-right px-4 py-3">Betrag</th>
-                <th className="px-4 py-3" />
+              <tr className="border-b border-forest-700 text-left">
+                <th className="th">Position</th>
+                <th className="th hidden md:table-cell">Beschreibung</th>
+                <th className="th text-right">Betrag</th>
+                <th className="th" />
               </tr>
             </thead>
             <tbody>
               {costItems.map(item => (
-                <tr key={item.id} className="border-b border-gray-800/50">
-                  <td className="px-4 py-3 font-medium">{item.name}</td>
-                  <td className="px-4 py-3 text-gray-400 hidden md:table-cell">{item.description ?? '—'}</td>
-                  <td className="px-4 py-3 text-right">{formatEur(item.amount)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={() => deleteItem(item.id)} className="text-gray-600 hover:text-red-400 transition-colors text-xs">Löschen</button>
+                <tr key={item.id} className="tr-row">
+                  <td className="td font-medium">{item.name}</td>
+                  <td className="td text-gray-400 hidden md:table-cell">{item.description ?? '—'}</td>
+                  <td className="td text-right">{formatEur(item.amount)}</td>
+                  <td className="td text-right">
+                    <button
+                      onClick={() => deleteItem(item.id)}
+                      className="text-gray-600 hover:text-red-400 transition-colors text-xs"
+                    >
+                      Löschen
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr className="bg-gray-800/50">
-                <td colSpan={2} className="px-4 py-3 font-semibold text-indigo-400">Gesamt</td>
-                <td className="px-4 py-3 text-right font-bold text-white">{formatEur(totalCosts)}</td>
+              <tr className="bg-forest-800/60">
+                <td colSpan={2} className="td font-semibold text-green-400">Gesamt</td>
+                <td className="td text-right font-bold text-white">{formatEur(totalCosts)}</td>
                 <td />
               </tr>
             </tfoot>
@@ -504,57 +529,59 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
   })
 
   return (
-    <form onSubmit={save} className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4 max-w-lg">
-      <h2 className="font-semibold text-indigo-400">Festival</h2>
-      <Field label="Name">
-        <input {...f('festival_name')} required className={inputCls} />
-      </Field>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Startdatum (erster Tag)">
-          <input type="date" {...f('festival_start')} className={inputCls} />
+    <form onSubmit={save} className="card max-w-lg">
+      <div className="card-body space-y-5">
+        <h2 className="card-title">Festival</h2>
+        <Field label="Name">
+          <input {...f('festival_name')} required className="input-sm w-full" />
         </Field>
-        <Field label="Anzahl Tage">
-          <input type="number" min="1" max="14" {...f('num_days')} className={inputCls} />
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Startdatum (erster Tag)">
+            <input type="date" {...f('festival_start')} className="input-sm w-full" />
+          </Field>
+          <Field label="Anzahl Tage">
+            <input type="number" min="1" max="14" {...f('num_days')} className="input-sm w-full" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Tagespauschale (€/Tag)">
+            <input type="number" step="0.01" {...f('daily_rate')} className="input-sm w-full" />
+          </Field>
+          <Field label="Tagesgast-Pauschale (€/Tag)">
+            <input type="number" step="0.01" {...f('guest_daily_rate')} className="input-sm w-full" />
+          </Field>
+        </div>
+        <Field label="Ort">
+          <input {...f('location')} className="input-sm w-full" />
         </Field>
+
+        <h2 className="card-title pt-1">Bankverbindung</h2>
+        <Field label="Empfänger">
+          <input {...f('bank_recipient')} className="input-sm w-full" />
+        </Field>
+        <Field label="Bank">
+          <input {...f('bank_name')} className="input-sm w-full" />
+        </Field>
+        <Field label="IBAN">
+          <input {...f('bank_iban')} className="input-sm w-full" placeholder="DE00 0000 0000 0000 0000 00" />
+        </Field>
+
+        <h2 className="card-title pt-1">Sonstiges</h2>
+        <Field label="Zahlungsdeadline">
+          <input type="date" {...f('payment_deadline')} className="input-sm w-full" />
+        </Field>
+        <Field label="Hinweise für Teilnehmer">
+          <textarea {...f('notes')} rows={3} className="input-sm w-full resize-none" />
+        </Field>
+
+        <button
+          type="submit"
+          disabled={saving}
+          className="btn-primary"
+        >
+          {saved ? '✓ Gespeichert' : saving ? 'Speichert…' : 'Speichern'}
+        </button>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Tagespauschale (€/Tag)">
-          <input type="number" step="0.01" {...f('daily_rate')} className={inputCls} />
-        </Field>
-        <Field label="Tagesgast-Pauschale (€/Tag)">
-          <input type="number" step="0.01" {...f('guest_daily_rate')} className={inputCls} />
-        </Field>
-      </div>
-      <Field label="Ort">
-        <input {...f('location')} className={inputCls} />
-      </Field>
-
-      <h2 className="font-semibold text-indigo-400 pt-2">Bankverbindung</h2>
-      <Field label="Empfänger">
-        <input {...f('bank_recipient')} className={inputCls} />
-      </Field>
-      <Field label="Bank">
-        <input {...f('bank_name')} className={inputCls} />
-      </Field>
-      <Field label="IBAN">
-        <input {...f('bank_iban')} className={inputCls} placeholder="DE00 0000 0000 0000 0000 00" />
-      </Field>
-
-      <h2 className="font-semibold text-indigo-400 pt-2">Sonstiges</h2>
-      <Field label="Zahlungsdeadline">
-        <input type="date" {...f('payment_deadline')} className={inputCls} />
-      </Field>
-      <Field label="Hinweise für Teilnehmer">
-        <textarea {...f('notes')} rows={3} className={`${inputCls} resize-none`} />
-      </Field>
-
-      <button
-        type="submit"
-        disabled={saving}
-        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
-      >
-        {saved ? '✓ Gespeichert' : saving ? 'Speichert…' : 'Speichern'}
-      </button>
     </form>
   )
 }
@@ -562,19 +589,19 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-gray-500 mb-1">{label}</label>
+      <label className="field-label">{label}</label>
       {children}
     </div>
   )
 }
 
-const inputCls = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors'
-
 function SummaryCard({ label, value, color }: { label: string; value: string; color?: 'green' | 'red' }) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-lg font-bold ${color === 'green' ? 'text-green-400' : color === 'red' ? 'text-red-400' : 'text-white'}`}>{value}</p>
+    <div className="stat-card">
+      <p className="stat-label">{label}</p>
+      <p className={`stat-value ${color === 'green' ? 'text-green-400' : color === 'red' ? 'text-red-400' : 'text-white'}`}>
+        {value}
+      </p>
     </div>
   )
 }

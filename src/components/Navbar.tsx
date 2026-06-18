@@ -11,15 +11,17 @@ export function Navbar() {
   }
 
   return (
-    <nav className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-      <Link to="/dashboard" className="text-lg font-bold text-indigo-400 tracking-wide">
-        🎪 Festival
+    <nav className="nav-bar">
+      <Link to="/dashboard" className="flex items-baseline gap-2">
+        <span className="text-lg font-black tracking-tight bg-gradient-to-r from-green-400 to-yellow-300 bg-clip-text text-transparent">
+          Wald Wiese Weed
+        </span>
       </Link>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-5">
         {profile?.is_admin && (
           <Link
             to="/admin"
-            className="text-sm text-gray-400 hover:text-white transition-colors"
+            className="text-xs font-medium text-green-500 hover:text-green-400 transition-colors tracking-wide uppercase"
           >
             Admin
           </Link>
@@ -27,7 +29,7 @@ export function Navbar() {
         <span className="text-sm text-gray-400">{profile?.name}</span>
         <button
           onClick={handleSignOut}
-          className="text-sm text-gray-500 hover:text-red-400 transition-colors"
+          className="text-xs text-gray-500 hover:text-red-400 transition-colors"
         >
           Abmelden
         </button>
