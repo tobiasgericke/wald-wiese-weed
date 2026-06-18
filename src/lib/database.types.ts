@@ -8,6 +8,8 @@ export interface Database {
           id: string
           email: string
           name: string
+          first_name: string | null
+          last_name: string | null
           is_admin: boolean
           created_at: string
         }
@@ -15,6 +17,8 @@ export interface Database {
           id: string
           email: string
           name: string
+          first_name?: string | null
+          last_name?: string | null
           is_admin?: boolean
           created_at?: string
         }
@@ -22,6 +26,8 @@ export interface Database {
           id?: string
           email?: string
           name?: string
+          first_name?: string | null
+          last_name?: string | null
           is_admin?: boolean
         }
       }
@@ -39,6 +45,7 @@ export interface Database {
           bank_iban: string | null
           bank_recipient: string | null
           payment_deadline: string | null
+          payment_reference: string | null
           notes: string | null
         }
         Insert: {
@@ -53,6 +60,7 @@ export interface Database {
           bank_iban?: string | null
           bank_recipient?: string | null
           payment_deadline?: string | null
+          payment_reference?: string | null
           notes?: string | null
         }
         Update: {
@@ -67,6 +75,7 @@ export interface Database {
           bank_iban?: string | null
           bank_recipient?: string | null
           payment_deadline?: string | null
+          payment_reference?: string | null
           notes?: string | null
         }
       }

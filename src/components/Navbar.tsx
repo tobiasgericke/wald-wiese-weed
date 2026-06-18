@@ -1,5 +1,14 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import type { Profile } from '../lib/database.types'
+
+function fullName(profile: Profile | null): string {
+  if (!profile) return ''
+  const fn = profile.first_name?.trim()
+  const ln = profile.last_name?.trim()
+  if (fn || ln) return [fn, ln].filter(Boolean).join(' ')
+  return profile.name
+}
 
 export function Navbar() {
   const { profile, signOut } = useAuth()
@@ -26,7 +35,7 @@ export function Navbar() {
             Admin
           </Link>
         )}
-        <span className="text-sm text-gray-400">{profile?.name}</span>
+        <span className="text-sm text-gray-400">{fullName(profile)}</span>
         <button
           onClick={handleSignOut}
           className="text-xs text-gray-500 hover:text-red-400 transition-colors"

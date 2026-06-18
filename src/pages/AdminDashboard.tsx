@@ -4,6 +4,13 @@ import { supabase } from '../lib/supabase'
 import { Navbar } from '../components/Navbar'
 import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance } from '../lib/database.types'
 
+function fullName(profile: Profile): string {
+  const fn = profile.first_name?.trim()
+  const ln = profile.last_name?.trim()
+  if (fn || ln) return [fn, ln].filter(Boolean).join(' ')
+  return profile.name
+}
+
 type ParticipantWithPayment = Profile & {
   payment: ParticipantPayment | null
   attendance: Attendance[]
@@ -71,11 +78,13 @@ export function AdminDashboard() {
     <>
       <Navbar />
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-        <div className="flex items-center gap-4">
-          <Link to="/dashboard" className="text-sm text-gray-500 hover:text-gray-300 transition-colors">
+        <div>
+          <Link to="/dashboard" className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
             ← Dashboard
           </Link>
-          <h1 className="text-2xl font-bold">Admin</h1>
+          <h1 className="text-4xl font-black tracking-tight bg-gradient-to-r from-green-400 to-yellow-300 bg-clip-text text-transparent leading-tight mt-1">
+            Admin
+          </h1>
         </div>
 
         {/* Summary Cards */}
@@ -239,7 +248,7 @@ function ParticipantsTab({
               const refund = advance - actual
               return (
                 <tr key={p.id} className="tr-row">
-                  <td className="td font-medium">{p.name}</td>
+                  <td className="td font-medium">{fullName(p)}</td>
                   <td className="td text-center text-gray-300">{days}</td>
                   <td className="td text-right">{formatEur(advance)}</td>
                   <td className="td text-right text-gray-400">{formatEur(actual)}</td>
@@ -320,7 +329,7 @@ function AttendanceTab({
           <tbody>
             {participants.map(p => (
               <tr key={p.id} className="tr-row">
-                <td className="td font-medium">{p.name}</td>
+                <td className="td font-medium">{fullName(p)}</td>
                 {dayLabels.map((_, i) => {
                   const present = isPresent(p, i)
                   const key = `${p.id}-${i}`
@@ -490,6 +499,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
     bank_iban: config?.bank_iban ?? '',
     bank_recipient: config?.bank_recipient ?? '',
     payment_deadline: config?.payment_deadline ?? '',
+    payment_reference: config?.payment_reference ?? '',
     notes: config?.notes ?? '',
   })
   const [saving, setSaving] = useState(false)
@@ -509,6 +519,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
       bank_iban: form.bank_iban || null,
       bank_recipient: form.bank_recipient || null,
       payment_deadline: form.payment_deadline || null,
+      payment_reference: form.payment_reference || null,
       notes: form.notes || null,
     }
     if (config) {
@@ -564,6 +575,12 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
         </Field>
         <Field label="IBAN">
           <input {...f('bank_iban')} className="input-sm w-full" placeholder="DE00 0000 0000 0000 0000 00" />
+        </Field>
+        <Field label="Verwendungszweck">
+          <input {...f('payment_reference')} className="input-sm w-full" placeholder="z.B. WaldWieseWeed25 {Name}" />
+          <p className="text-xs text-gray-500 mt-1">
+            <code className="bg-forest-800 px-1 rounded">{'{Name}'}</code> wird durch den vollen Namen des Teilnehmers ersetzt.
+          </p>
         </Field>
 
         <h2 className="card-title pt-1">Sonstiges</h2>

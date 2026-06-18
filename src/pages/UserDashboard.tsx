@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Navbar } from '../components/Navbar'
-import type { FestivalConfig, ParticipantPayment, Attendance } from '../lib/database.types'
+import type { FestivalConfig, ParticipantPayment, Attendance, Profile } from '../lib/database.types'
+
+function fullName(profile: Profile | null): string {
+  if (!profile) return ''
+  const fn = profile.first_name?.trim()
+  const ln = profile.last_name?.trim()
+  if (fn || ln) return [fn, ln].filter(Boolean).join(' ')
+  return profile.name
+}
+
+function firstName(profile: Profile | null): string {
+  return profile?.first_name?.trim() || profile?.name?.split(' ')[0] || ''
+}
 
 type View = 'planning' | 'calculating' | 'confirmed'
 
@@ -182,7 +194,7 @@ export function UserDashboard() {
           <div className="space-y-6">
             <div>
               <h2 className="text-3xl font-black text-white leading-tight">
-                {profile?.name},<br />wann bist du dabei?
+                {firstName(profile)},<br />wann bist du dabei?
               </h2>
               <p className="text-gray-400 text-sm mt-2">
                 Tippe auf die Tage an denen du anwesend bist.
@@ -356,7 +368,11 @@ export function UserDashboard() {
                     {payment && remaining > 0 && (
                       <div className="border-t border-forest-700 pt-3">
                         <p className="text-xs text-gray-400 mb-1">Verwendungszweck</p>
-                        <p className="font-mono text-sm text-gray-200">Festival {profile?.name}</p>
+                        <p className="font-mono text-sm text-gray-200">
+                          {config?.payment_reference
+                            ? config.payment_reference.replace('{Name}', fullName(profile))
+                            : `Festival ${fullName(profile)}`}
+                        </p>
                       </div>
                     )}
                   </div>

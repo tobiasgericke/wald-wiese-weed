@@ -3,7 +3,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 export function RegisterPage() {
-  const [name, setName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -18,7 +19,12 @@ export function RegisterPage() {
     const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name } },
+      options: {
+        data: {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+        },
+      },
     })
 
     if (signUpError) {
@@ -54,15 +60,29 @@ export function RegisterPage() {
         <div className="card">
           <div className="card-body">
             <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <label className="field-label">Name</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  required
-                  className="input-field"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="field-label">Vorname</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={e => setFirstName(e.target.value)}
+                    required
+                    autoComplete="given-name"
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="field-label">Nachname</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={e => setLastName(e.target.value)}
+                    required
+                    autoComplete="family-name"
+                    className="input-field"
+                  />
+                </div>
               </div>
               <div>
                 <label className="field-label">E-Mail</label>
@@ -71,6 +91,7 @@ export function RegisterPage() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
+                  autoComplete="email"
                   className="input-field"
                 />
               </div>
@@ -82,6 +103,7 @@ export function RegisterPage() {
                   onChange={e => setPassword(e.target.value)}
                   required
                   minLength={6}
+                  autoComplete="new-password"
                   className="input-field"
                 />
               </div>
