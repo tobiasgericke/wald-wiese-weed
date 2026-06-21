@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Navbar } from '../components/Navbar'
-import type { FestivalConfig, ParticipantPayment, Attendance, Profile } from '../lib/database.types'
+import type { FestivalConfig, ParticipantPayment, Attendance, Profile, LegacyCredit, LegacyCreditDecision, LegacyCreditRequest, LegacyDecisionType } from '../lib/database.types'
 
 function fullName(profile: Profile | null): string {
   if (!profile) return ''
@@ -17,6 +17,15 @@ function firstName(profile: Profile | null): string {
 }
 
 type View = 'planning' | 'calculating' | 'confirmed'
+type LegacyPhase =
+  | 'loading'
+  | 'matched'       // confirmed match, no decision yet
+  | 'decided'       // decision already submitted
+  | 'no_match'      // no match found, show "were you there?" prompt
+  | 'ask_name'      // user said yes → show dropdown
+  | 'request_pending'
+  | 'request_rejected'
+  | 'skipped'       // user said "no, first time"
 
 const scrollTo = (id: string) =>
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
@@ -30,13 +39,20 @@ export function UserDashboard() {
   const [view, setView] = useState<View>('planning')
   const [activeSection, setActiveSection] = useState('sec-festival')
 
+  // Legacy credit state
+  const [legacyPhase, setLegacyPhase] = useState<LegacyPhase>('loading')
+  const [legacyCredit, setLegacyCredit] = useState<LegacyCredit | null>(null)
+  const [legacyDecision, setLegacyDecision] = useState<LegacyCreditDecision | null>(null)
+  const [legacyRequest, setLegacyRequest] = useState<LegacyCreditRequest | null>(null)
+  const [unmatchedCredits, setUnmatchedCredits] = useState<LegacyCredit[]>([])
+
   useEffect(() => {
     document.documentElement.classList.add('snap-page')
     return () => document.documentElement.classList.remove('snap-page')
   }, [])
 
   useEffect(() => {
-    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status']
+    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status', 'sec-altguthaben']
     const observer = new IntersectionObserver(
       entries => {
         entries.forEach(entry => {
@@ -65,6 +81,37 @@ export function UserDashboard() {
       setLoading(false)
       const alreadyConfirmed = localStorage.getItem(`wwwConfirmed_${user.id}`)
       if (alreadyConfirmed || pay) setView('confirmed')
+    })
+
+    // Legacy credit flow
+    const skipped = localStorage.getItem(`wwwLegacySkip_${user.id}`)
+    if (skipped) { setLegacyPhase('skipped'); return }
+
+    supabase.rpc('try_automatch_legacy_credit').then(async ({ data }) => {
+      const result = data as { status: string; credit_id?: string; amount?: number; display_name?: string }
+      if (result?.status === 'matched' || result?.status === 'already_matched') {
+        const { data: credit } = await supabase
+          .from('legacy_credits').select('*').eq('matched_user_id', user.id).maybeSingle()
+        const { data: decision } = await supabase
+          .from('legacy_credit_decisions').select('*').eq('user_id', user.id).maybeSingle()
+        setLegacyCredit(credit)
+        setLegacyDecision(decision)
+        setLegacyPhase(decision ? 'decided' : 'matched')
+      } else {
+        // Check for pending/rejected request
+        const { data: req } = await supabase
+          .from('legacy_credit_requests').select('*').eq('requesting_user_id', user.id)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()
+        if (req?.status === 'pending') {
+          setLegacyRequest(req)
+          setLegacyPhase('request_pending')
+        } else if (req?.status === 'rejected') {
+          setLegacyRequest(req)
+          setLegacyPhase('request_rejected')
+        } else {
+          setLegacyPhase('no_match')
+        }
+      }
     })
   }, [user])
 
@@ -100,12 +147,15 @@ export function UserDashboard() {
   const estimatedCost = daysPresent * dailyRate
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
+  const showLegacySection = legacyPhase !== 'skipped' && legacyPhase !== 'loading'
+
   const navLinks: { id: string; label: string }[] = [
     { id: 'sec-festival', label: 'Festival' },
     { id: 'sec-anwesenheit', label: 'Anwesenheit' },
     { id: 'sec-kosten', label: 'Kosten' },
     { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
     ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
+    ...(showLegacySection ? [{ id: 'sec-altguthaben', label: 'Altguthaben' }] : []),
   ]
 
   return (
@@ -433,6 +483,51 @@ export function UserDashboard() {
           </section>
         )}
 
+        {/* ── 5. Altguthaben (WWW6) ───────────────────────────── */}
+        {showLegacySection && (
+          <section id="sec-altguthaben" className="snap-section">
+            <LegacySurveySection
+              phase={legacyPhase}
+              credit={legacyCredit}
+              decision={legacyDecision}
+              request={legacyRequest}
+              unmatchedCredits={unmatchedCredits}
+              config={config}
+              onSkip={() => {
+                localStorage.setItem(`wwwLegacySkip_${user!.id}`, '1')
+                setLegacyPhase('skipped')
+              }}
+              onAskName={async () => {
+                const { data } = await supabase
+                  .from('legacy_credits').select('*').is('matched_user_id', null).order('display_name')
+                setUnmatchedCredits(data ?? [])
+                setLegacyPhase('ask_name')
+              }}
+              onSubmitRequest={async (creditId: string) => {
+                const { data } = await supabase.rpc('submit_legacy_credit_request', { p_credit_id: creditId })
+                if ((data as { error?: string })?.error) return
+                const { data: req } = await supabase
+                  .from('legacy_credit_requests').select('*').eq('requesting_user_id', user!.id)
+                  .eq('status', 'pending').maybeSingle()
+                setLegacyRequest(req)
+                setLegacyPhase('request_pending')
+              }}
+              onDecide={async (decision: LegacyDecisionType) => {
+                if (!legacyCredit) return
+                await supabase.from('legacy_credit_decisions').insert({
+                  legacy_credit_id: legacyCredit.id,
+                  user_id: user!.id,
+                  decision,
+                })
+                const { data: dec } = await supabase
+                  .from('legacy_credit_decisions').select('*').eq('user_id', user!.id).maybeSingle()
+                setLegacyDecision(dec)
+                setLegacyPhase('decided')
+              }}
+            />
+          </section>
+        )}
+
       </div>
     </>
   )
@@ -563,6 +658,195 @@ function StatCard({ label, value, sub, color }: {
       <p className="stat-label">{label}</p>
       <p className={`stat-value ${textColor}`}>{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+// ─── Legacy Survey Section ────────────────────────────────────────────────────
+
+function LegacySurveySection({
+  phase,
+  credit,
+  decision,
+  request,
+  unmatchedCredits,
+  config,
+  onSkip,
+  onAskName,
+  onSubmitRequest,
+  onDecide,
+}: {
+  phase: LegacyPhase
+  credit: LegacyCredit | null
+  decision: LegacyCreditDecision | null
+  request: LegacyCreditRequest | null
+  unmatchedCredits: LegacyCredit[]
+  config: FestivalConfig | null
+  onSkip: () => void
+  onAskName: () => Promise<void>
+  onSubmitRequest: (creditId: string) => Promise<void>
+  onDecide: (decision: LegacyDecisionType) => Promise<void>
+}) {
+  const [selectedCredit, setSelectedCredit] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [deciding, setDeciding] = useState<LegacyDecisionType | null>(null)
+
+  const DECISION_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
+    { key: 'refund',      label: 'Zurückzahlen',       desc: 'Ich möchte das Geld zurück.',                      color: 'border-blue-600 hover:border-blue-400' },
+    { key: 'apply_www7',  label: 'Verrechnen',          desc: 'Mit meinen WWW7-Kosten verrechnen.',               color: 'border-green-600 hover:border-green-400' },
+    { key: 'donate_www',  label: 'Spende ans WWW',      desc: 'Das Geld bleibt in der Gemeinschaft.',             color: 'border-yellow-600 hover:border-yellow-400' },
+    ...(config?.donation_org1_name ? [{
+      key: 'donate_org1' as LegacyDecisionType,
+      label: `Spende: ${config.donation_org1_name}`,
+      desc: config.donation_org1_description ?? '',
+      color: 'border-purple-600 hover:border-purple-400',
+    }] : []),
+    ...(config?.donation_org2_name ? [{
+      key: 'donate_org2' as LegacyDecisionType,
+      label: `Spende: ${config.donation_org2_name}`,
+      desc: config.donation_org2_description ?? '',
+      color: 'border-pink-600 hover:border-pink-400',
+    }] : []),
+  ]
+
+  const DECISION_LABELS: Record<LegacyDecisionType, string> = {
+    refund: 'Rückzahlung',
+    apply_www7: 'Verrechnung WWW7',
+    donate_www: 'Spende ans WWW',
+    donate_org1: config?.donation_org1_name ? `Spende: ${config.donation_org1_name}` : 'Spende Org 1',
+    donate_org2: config?.donation_org2_name ? `Spende: ${config.donation_org2_name}` : 'Spende Org 2',
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-black text-white">Altguthaben</h2>
+        <p className="text-gray-400 text-sm mt-2">Aus dem letzten WWW sind noch Gelder offen.</p>
+      </div>
+
+      {phase === 'decided' && decision && (
+        <div className="card">
+          <div className="card-body space-y-2">
+            <div className="badge-paid">Deine Entscheidung ist gespeichert.</div>
+            <p className="text-sm text-gray-300">
+              Guthaben: <span className="text-white font-semibold">{credit ? formatEur(credit.amount_owed) : '—'}</span>
+              {' · '}Wahl: <span className="text-green-400 font-semibold">{DECISION_LABELS[decision.decision]}</span>
+            </p>
+          </div>
+        </div>
+      )}
+
+      {phase === 'matched' && credit && (
+        <div className="space-y-4">
+          <div className="card">
+            <div className="card-body">
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Dein Guthaben</p>
+              <p className="text-3xl font-black text-yellow-300">{formatEur(credit.amount_owed)}</p>
+              <p className="text-xs text-gray-500 mt-1">aus WWW6 · {credit.display_name}</p>
+            </div>
+          </div>
+          <p className="text-sm text-gray-300 font-medium">Was soll damit passieren?</p>
+          <div className="space-y-2">
+            {DECISION_OPTIONS.map(opt => (
+              <button
+                key={opt.key}
+                disabled={!!deciding}
+                onClick={async () => {
+                  setDeciding(opt.key)
+                  await onDecide(opt.key)
+                  setDeciding(null)
+                }}
+                className={`w-full text-left p-4 rounded-xl border-2 bg-forest-800 transition-all ${deciding === opt.key ? 'opacity-50' : opt.color}`}
+              >
+                <p className="font-semibold text-white text-sm">{deciding === opt.key ? 'Wird gespeichert…' : opt.label}</p>
+                {opt.desc && <p className="text-xs text-gray-400 mt-0.5">{opt.desc}</p>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {phase === 'no_match' && (
+        <div className="card">
+          <div className="card-body space-y-4">
+            <p className="text-sm text-gray-200">Warst du beim letzten WaldWieseWeed dabei?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
+                disabled={submitting}
+                className="btn-primary text-sm"
+              >
+                {submitting ? 'Lädt…' : 'Ja, ich war dabei'}
+              </button>
+              <button onClick={onSkip} className="btn-ghost text-sm">
+                Nein, erstes Mal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {phase === 'ask_name' && (
+        <div className="card">
+          <div className="card-body space-y-4">
+            <p className="text-sm text-gray-200">
+              Wähle deinen Namen aus der Liste des letzten Jahres:
+            </p>
+            <select
+              value={selectedCredit}
+              onChange={e => setSelectedCredit(e.target.value)}
+              className="input-sm w-full"
+            >
+              <option value="">— Namen auswählen —</option>
+              {unmatchedCredits.map(c => (
+                <option key={c.id} value={c.id}>{c.display_name} · {formatEur(c.amount_owed)}</option>
+              ))}
+            </select>
+            <button
+              disabled={!selectedCredit || submitting}
+              onClick={async () => {
+                setSubmitting(true)
+                await onSubmitRequest(selectedCredit)
+                setSubmitting(false)
+              }}
+              className="btn-primary text-sm"
+            >
+              {submitting ? 'Wird gesendet…' : 'Anfrage absenden'}
+            </button>
+            <p className="text-xs text-gray-500">
+              Ein Admin bestätigt deine Zuordnung — danach kannst du entscheiden.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {phase === 'request_pending' && (
+        <div className="card">
+          <div className="card-body">
+            <div className="badge-pending">
+              ⏳ Deine Anfrage ist eingegangen — wir bestätigen sie in Kürze.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {phase === 'request_rejected' && request && (
+        <div className="card">
+          <div className="card-body space-y-3">
+            <div className="badge-pending">Anfrage abgelehnt.</div>
+            {request.admin_note && (
+              <p className="text-xs text-gray-400">Hinweis: {request.admin_note}</p>
+            )}
+            <button
+              onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
+              disabled={submitting}
+              className="btn-ghost text-sm"
+            >
+              Erneut versuchen
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

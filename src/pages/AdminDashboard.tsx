@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Navbar } from '../components/Navbar'
-import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance } from '../lib/database.types'
+import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance, LegacyCredit, LegacyCreditRequest, LegacyCreditDecision } from '../lib/database.types'
 
 function fullName(profile: Profile): string {
   const fn = profile.first_name?.trim()
@@ -16,24 +16,32 @@ type ParticipantWithPayment = Profile & {
   attendance: Attendance[]
 }
 
-type Tab = 'participants' | 'attendance' | 'costs' | 'config'
+type Tab = 'participants' | 'attendance' | 'costs' | 'config' | 'legacy'
 
 export function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('participants')
   const [participants, setParticipants] = useState<ParticipantWithPayment[]>([])
   const [costItems, setCostItems] = useState<CostItem[]>([])
   const [config, setConfig] = useState<FestivalConfig | null>(null)
+  const [legacyCredits, setLegacyCredits] = useState<LegacyCredit[]>([])
+  const [legacyRequests, setLegacyRequests] = useState<LegacyCreditRequest[]>([])
+  const [legacyDecisions, setLegacyDecisions] = useState<LegacyCreditDecision[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchAll = async () => {
-    const [{ data: profiles }, { data: costs }, { data: cfg }, { data: payments }, { data: att }] =
-      await Promise.all([
-        supabase.from('profiles').select('*').order('name'),
-        supabase.from('cost_items').select('*').order('created_at'),
-        supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
-        supabase.from('participant_payments').select('*'),
-        supabase.from('attendance').select('*'),
-      ])
+    const [
+      { data: profiles }, { data: costs }, { data: cfg }, { data: payments }, { data: att },
+      { data: credits }, { data: requests }, { data: decisions },
+    ] = await Promise.all([
+      supabase.from('profiles').select('*').order('name'),
+      supabase.from('cost_items').select('*').order('created_at'),
+      supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('participant_payments').select('*'),
+      supabase.from('attendance').select('*'),
+      supabase.from('legacy_credits').select('*').order('display_name'),
+      supabase.from('legacy_credit_requests').select('*').order('created_at', { ascending: false }),
+      supabase.from('legacy_credit_decisions').select('*'),
+    ])
 
     const merged: ParticipantWithPayment[] = (profiles ?? []).map(p => ({
       ...p,
@@ -44,6 +52,9 @@ export function AdminDashboard() {
     setParticipants(merged)
     setCostItems(costs ?? [])
     setConfig(cfg)
+    setLegacyCredits(credits ?? [])
+    setLegacyRequests(requests ?? [])
+    setLegacyDecisions(decisions ?? [])
     setLoading(false)
   }
 
@@ -67,11 +78,14 @@ export function AdminDashboard() {
     )
   }
 
-  const tabs: { key: Tab; label: string }[] = [
+  const pendingRequests = legacyRequests.filter(r => r.status === 'pending')
+
+  const tabs: { key: Tab; label: string; badge?: number }[] = [
     { key: 'participants', label: 'Teilnehmer' },
     { key: 'attendance', label: 'Anwesenheit' },
     { key: 'costs', label: 'Kosten' },
     { key: 'config', label: 'Festival-Infos' },
+    { key: 'legacy', label: 'Altguthaben', badge: pendingRequests.length },
   ]
 
   return (
@@ -106,9 +120,14 @@ export function AdminDashboard() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`tab-btn ${tab === t.key ? 'tab-active' : 'tab-inactive'}`}
+              className={`tab-btn ${tab === t.key ? 'tab-active' : 'tab-inactive'} relative`}
             >
               {t.label}
+              {t.badge ? (
+                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full bg-yellow-400 text-forest-950">
+                  {t.badge}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -133,6 +152,15 @@ export function AdminDashboard() {
         )}
         {tab === 'config' && (
           <ConfigTab config={config} onRefresh={fetchAll} />
+        )}
+        {tab === 'legacy' && (
+          <LegacyTab
+            credits={legacyCredits}
+            requests={legacyRequests}
+            decisions={legacyDecisions}
+            participants={participants}
+            onRefresh={fetchAll}
+          />
         )}
       </main>
     </>
@@ -501,6 +529,12 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
     payment_deadline: config?.payment_deadline ?? '',
     payment_reference: config?.payment_reference ?? '',
     notes: config?.notes ?? '',
+    donation_org1_name: config?.donation_org1_name ?? '',
+    donation_org1_url: config?.donation_org1_url ?? '',
+    donation_org1_description: config?.donation_org1_description ?? '',
+    donation_org2_name: config?.donation_org2_name ?? '',
+    donation_org2_url: config?.donation_org2_url ?? '',
+    donation_org2_description: config?.donation_org2_description ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -521,6 +555,12 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
       payment_deadline: form.payment_deadline || null,
       payment_reference: form.payment_reference || null,
       notes: form.notes || null,
+      donation_org1_name: form.donation_org1_name || null,
+      donation_org1_url: form.donation_org1_url || null,
+      donation_org1_description: form.donation_org1_description || null,
+      donation_org2_name: form.donation_org2_name || null,
+      donation_org2_url: form.donation_org2_url || null,
+      donation_org2_description: form.donation_org2_description || null,
     }
     if (config) {
       await supabase.from('festival_config').update(payload).eq('id', 1)
@@ -583,6 +623,29 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
           </p>
         </Field>
 
+        <h2 className="card-title pt-1">Altguthaben — Spendenorganisationen</h2>
+        <p className="text-xs text-gray-500 -mt-3">
+          Zwei konfigurierbare Spendenoptionen für das Altguthaben-Survey (leer lassen = nicht anzeigen).
+        </p>
+        <Field label="Organisation 1 — Name">
+          <input {...f('donation_org1_name')} className="input-sm w-full" placeholder="z.B. Greenpeace" />
+        </Field>
+        <Field label="Organisation 1 — Website">
+          <input {...f('donation_org1_url')} className="input-sm w-full" placeholder="https://..." type="url" />
+        </Field>
+        <Field label="Organisation 1 — Beschreibung">
+          <input {...f('donation_org1_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer" />
+        </Field>
+        <Field label="Organisation 2 — Name">
+          <input {...f('donation_org2_name')} className="input-sm w-full" placeholder="z.B. WWF" />
+        </Field>
+        <Field label="Organisation 2 — Website">
+          <input {...f('donation_org2_url')} className="input-sm w-full" placeholder="https://..." type="url" />
+        </Field>
+        <Field label="Organisation 2 — Beschreibung">
+          <input {...f('donation_org2_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer" />
+        </Field>
+
         <h2 className="card-title pt-1">Sonstiges</h2>
         <Field label="Zahlungsdeadline">
           <input type="date" {...f('payment_deadline')} className="input-sm w-full" />
@@ -625,4 +688,218 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
 
 function formatEur(amount: number) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(amount)
+}
+
+// ─── Legacy Tab ───────────────────────────────────────────────────────────────
+
+const DECISION_LABELS: Record<string, string> = {
+  refund: 'Rückzahlung',
+  apply_www7: 'Verrechnung WWW7',
+  donate_www: 'Spende ans WWW',
+  donate_org1: 'Spende Org 1',
+  donate_org2: 'Spende Org 2',
+}
+
+function LegacyTab({
+  credits,
+  requests,
+  decisions,
+  participants,
+  onRefresh,
+}: {
+  credits: LegacyCredit[]
+  requests: LegacyCreditRequest[]
+  decisions: LegacyCreditDecision[]
+  participants: ParticipantWithPayment[]
+  onRefresh: () => void
+}) {
+  const [rejectId, setRejectId] = useState<string | null>(null)
+  const [rejectNote, setRejectNote] = useState('')
+  const [working, setWorking] = useState<string | null>(null)
+
+  const profileName = (userId: string) => {
+    const p = participants.find(p => p.id === userId)
+    return p ? fullName(p) : userId.slice(0, 8) + '…'
+  }
+
+  const pendingRequests = requests.filter(r => r.status === 'pending')
+  const matched = credits.filter(c => c.match_confirmed)
+  const decided = decisions.length
+  const unmatched = credits.filter(c => !c.matched_user_id)
+  const totalAmount = credits.reduce((s, c) => s + c.amount_owed, 0)
+  const decidedAmount = decisions.reduce((s, d) => {
+    const credit = credits.find(c => c.id === d.legacy_credit_id)
+    return s + (credit?.amount_owed ?? 0)
+  }, 0)
+
+  const approve = async (requestId: string) => {
+    setWorking(requestId)
+    await supabase.rpc('approve_legacy_credit_request', { p_request_id: requestId })
+    setWorking(null)
+    onRefresh()
+  }
+
+  const reject = async (requestId: string) => {
+    setWorking(requestId)
+    await supabase.rpc('reject_legacy_credit_request', { p_request_id: requestId, p_note: rejectNote || null })
+    setRejectId(null)
+    setRejectNote('')
+    setWorking(null)
+    onRefresh()
+  }
+
+  const decisionSummary = Object.entries(DECISION_LABELS).map(([key, label]) => ({
+    key,
+    label,
+    count: decisions.filter(d => d.decision === key).length,
+    amount: decisions
+      .filter(d => d.decision === key)
+      .reduce((s, d) => s + (credits.find(c => c.id === d.legacy_credit_id)?.amount_owed ?? 0), 0),
+  })).filter(d => d.count > 0)
+
+  return (
+    <div className="space-y-6">
+      {/* Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SummaryCard label="Gesamtguthaben" value={formatEur(totalAmount)} />
+        <SummaryCard label="Zugeordnet" value={`${matched.length} / ${credits.length}`} />
+        <SummaryCard label="Entschieden" value={`${decided} · ${formatEur(decidedAmount)}`} color="green" />
+        <SummaryCard label="Offen (kein Account)" value={unmatched.length.toString()} color={unmatched.length > 0 ? 'red' : undefined} />
+      </div>
+
+      {/* Pending requests */}
+      {pendingRequests.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-yellow-300">Offene Zuordnungsanfragen</h3>
+          <div className="table-wrapper">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-forest-700 text-left">
+                  <th className="th">Anfragender</th>
+                  <th className="th">Beanspruchter Eintrag</th>
+                  <th className="th text-right">Betrag</th>
+                  <th className="th" />
+                </tr>
+              </thead>
+              <tbody>
+                {pendingRequests.map(req => {
+                  const credit = credits.find(c => c.id === req.legacy_credit_id)
+                  return (
+                    <tr key={req.id} className="tr-row">
+                      <td className="td font-medium">{profileName(req.requesting_user_id)}</td>
+                      <td className="td text-gray-300">{credit?.display_name ?? '—'}</td>
+                      <td className="td text-right">{credit ? formatEur(credit.amount_owed) : '—'}</td>
+                      <td className="td">
+                        <div className="flex gap-2 justify-end items-center">
+                          {rejectId === req.id ? (
+                            <>
+                              <input
+                                className="input-sm text-xs w-40"
+                                placeholder="Begründung (optional)"
+                                value={rejectNote}
+                                onChange={e => setRejectNote(e.target.value)}
+                              />
+                              <button
+                                onClick={() => reject(req.id)}
+                                disabled={working === req.id}
+                                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                              >
+                                Bestätigen
+                              </button>
+                              <button
+                                onClick={() => { setRejectId(null); setRejectNote('') }}
+                                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                              >
+                                Abbrechen
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => approve(req.id)}
+                                disabled={working === req.id}
+                                className="text-xs px-3 py-1 rounded-lg bg-green-800 hover:bg-green-700 text-green-300 transition-colors"
+                              >
+                                Bestätigen
+                              </button>
+                              <button
+                                onClick={() => setRejectId(req.id)}
+                                className="text-xs text-gray-500 hover:text-red-400 transition-colors"
+                              >
+                                Ablehnen
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Decision summary */}
+      {decisionSummary.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-green-400">Entscheidungen</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {decisionSummary.map(d => (
+              <div key={d.key} className="stat-card text-left">
+                <p className="stat-label">{d.label}</p>
+                <p className="stat-value text-base">{d.count}× · {formatEur(d.amount)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* All credits overview */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-gray-400">Alle Einträge (WWW6)</h3>
+        <div className="table-wrapper">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-forest-700 text-left">
+                <th className="th">Name (WWW6)</th>
+                <th className="th text-right">Betrag</th>
+                <th className="th">Zugeordnet an</th>
+                <th className="th">Entscheidung</th>
+              </tr>
+            </thead>
+            <tbody>
+              {credits.map(credit => {
+                const decision = decisions.find(d => d.legacy_credit_id === credit.id)
+                const req = requests.find(r => r.legacy_credit_id === credit.id && r.status === 'pending')
+                return (
+                  <tr key={credit.id} className="tr-row">
+                    <td className="td font-medium">{credit.display_name}</td>
+                    <td className="td text-right">{formatEur(credit.amount_owed)}</td>
+                    <td className="td text-gray-300 text-xs">
+                      {credit.matched_user_id && credit.match_confirmed
+                        ? profileName(credit.matched_user_id)
+                        : req
+                          ? <span className="text-yellow-400">Anfrage: {profileName(req.requesting_user_id)}</span>
+                          : <span className="text-gray-600">—</span>
+                      }
+                    </td>
+                    <td className="td text-xs">
+                      {decision
+                        ? <span className="text-green-400">{DECISION_LABELS[decision.decision]}</span>
+                        : credit.match_confirmed
+                          ? <span className="text-yellow-500">Ausstehend</span>
+                          : <span className="text-gray-600">—</span>
+                      }
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
 }
