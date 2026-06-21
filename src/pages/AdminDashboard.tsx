@@ -137,6 +137,8 @@ export function AdminDashboard() {
             participants={participants}
             config={config}
             actualDailyRate={actualDailyRate}
+            legacyCredits={legacyCredits}
+            legacyDecisions={legacyDecisions}
             onRefresh={fetchAll}
           />
         )}
@@ -190,19 +192,30 @@ function ParticipantsTab({
   participants,
   config,
   actualDailyRate,
+  legacyCredits,
+  legacyDecisions,
   onRefresh,
 }: {
   participants: ParticipantWithPayment[]
   config: FestivalConfig | null
   actualDailyRate: number
+  legacyCredits: LegacyCredit[]
+  legacyDecisions: LegacyCreditDecision[]
   onRefresh: () => void
 }) {
   const numDays = config?.num_days ?? 4
   const advanceRate = config?.daily_rate ?? 25
 
+  const getLegacyDiscount = (userId: string) => {
+    const decision = legacyDecisions.find(d => d.user_id === userId && d.decision === 'apply_www7')
+    if (!decision) return 0
+    const credit = legacyCredits.find(c => c.id === decision.legacy_credit_id)
+    return credit ? Number(credit.amount_owed) : 0
+  }
+
   const togglePaid = async (p: ParticipantWithPayment) => {
     const days = daysPresent(p.attendance, numDays)
-    const amountDue = days * advanceRate
+    const amountDue = Math.max(0, days * advanceRate - getLegacyDiscount(p.id))
     if (!p.payment) {
       await supabase.from('participant_payments').insert({
         user_id: p.id,
@@ -226,7 +239,7 @@ function ParticipantsTab({
 
   const syncAmountDue = async (p: ParticipantWithPayment) => {
     const days = daysPresent(p.attendance, numDays)
-    const amountDue = days * advanceRate
+    const amountDue = Math.max(0, days * advanceRate - getLegacyDiscount(p.id))
     if (!p.payment) {
       await supabase.from('participant_payments').insert({
         user_id: p.id, amount_due: amountDue, amount_paid: 0, paid: false,
@@ -271,7 +284,7 @@ function ParticipantsTab({
           <tbody>
             {participants.map(p => {
               const days = daysPresent(p.attendance, numDays)
-              const advance = days * advanceRate
+              const advance = Math.max(0, days * advanceRate - getLegacyDiscount(p.id))
               const actual = days * actualDailyRate
               const refund = advance - actual
               return (

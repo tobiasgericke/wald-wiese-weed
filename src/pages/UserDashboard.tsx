@@ -45,6 +45,7 @@ export function UserDashboard() {
   const [legacyDecision, setLegacyDecision] = useState<LegacyCreditDecision | null>(null)
   const [legacyRequest, setLegacyRequest] = useState<LegacyCreditRequest | null>(null)
   const [unmatchedCredits, setUnmatchedCredits] = useState<LegacyCredit[]>([])
+  const [legacyAttending, setLegacyAttending] = useState<boolean | null>(null)
 
   useEffect(() => {
     document.documentElement.classList.add('snap-page')
@@ -105,6 +106,10 @@ export function UserDashboard() {
         const { data: decision } = await supabase
           .from('legacy_credit_decisions').select('*').eq('user_id', user.id).maybeSingle()
         setLegacyDecision(decision)
+        if (!decision) {
+          const stored = localStorage.getItem(`wwwLegacyAttending_${user.id}`)
+          if (stored !== null) setLegacyAttending(stored === 'true')
+        }
         setLegacyPhase(decision ? 'decided' : 'matched')
       } else {
         // Check for pending/rejected request
@@ -168,14 +173,18 @@ export function UserDashboard() {
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
   const showLegacySection = legacyPhase !== 'skipped' && legacyPhase !== 'loading'
+  // Hide attendance/costs/action when legacy section is active and user is NOT attending WWW7
+  const showPostLegacySections = !showLegacySection || legacyAttending === true
 
   const navLinks: { id: string; label: string }[] = [
     { id: 'sec-festival', label: 'Festival' },
     ...(showLegacySection ? [{ id: 'sec-altguthaben', label: 'Altguthaben' }] : []),
-    { id: 'sec-anwesenheit', label: 'Anwesenheit' },
-    { id: 'sec-kosten', label: 'Kosten' },
-    { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
-    ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
+    ...(showPostLegacySections ? [
+      { id: 'sec-anwesenheit', label: 'Anwesenheit' },
+      { id: 'sec-kosten', label: 'Kosten' },
+      { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
+      ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
+    ] : []),
   ]
 
   return (
@@ -269,6 +278,11 @@ export function UserDashboard() {
               request={legacyRequest}
               unmatchedCredits={unmatchedCredits}
               config={config}
+              attending={legacyAttending}
+              onSetAttending={(val) => {
+                setLegacyAttending(val)
+                localStorage.setItem(`wwwLegacyAttending_${user!.id}`, String(val))
+              }}
               onSkip={() => {
                 localStorage.setItem(`wwwLegacySkip_${user!.id}`, '1')
                 setLegacyPhase('skipped')
@@ -301,6 +315,8 @@ export function UserDashboard() {
                 setLegacyPhase('decided')
               }}
               onChangeDecision={() => {
+                localStorage.removeItem(`wwwLegacyAttending_${user!.id}`)
+                setLegacyAttending(null)
                 setLegacyDecision(null)
                 setLegacyPhase('matched')
               }}
@@ -308,6 +324,9 @@ export function UserDashboard() {
             />
           </section>
         )}
+
+        {/* ── 2–5. Nur wenn attending WWW7 (oder kein Legacy-Gate) ─ */}
+        {showPostLegacySections && <>
 
         {/* ── 2. Anwesenheit ──────────────────────────────────── */}
         <section id="sec-anwesenheit" className="snap-section">
@@ -361,7 +380,7 @@ export function UserDashboard() {
                   <StatCard label="Deine Tage" value={daysPresent.toString()} />
                   <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
                   <StatCard
-                    label={legacyDiscount > 0 ? 'Brutto-Kosten' : 'Geschätzte Kosten'}
+                    label={legacyDiscount > 0 ? 'Zwischensumme' : 'Endsumme'}
                     value={formatEur(estimatedCost)}
                     color="yellow"
                   />
@@ -373,14 +392,11 @@ export function UserDashboard() {
                       <span className="text-green-400">− {formatEur(legacyDiscount)}</span>
                     </div>
                     <div className="flex justify-between text-sm font-bold border-t border-forest-700 pt-2">
-                      <span className="text-white">Netto-Schätzung</span>
+                      <span className="text-white">Endsumme</span>
                       <span className="text-yellow-300">{formatEur(netEstimate)}</span>
                     </div>
                   </div>
                 )}
-                <p className="text-xs text-gray-400">
-                  Endgültiger Betrag wird nach dem Festival aus den tatsächlichen Gesamtkosten berechnet.
-                </p>
               </div>
             </div>
 
@@ -457,9 +473,7 @@ export function UserDashboard() {
               <div>
                 <h2 className="text-3xl font-black text-white">Überweisung</h2>
                 <p className="text-gray-400 text-sm mt-2">
-                  {payment
-                    ? 'Das ist dein festgelegter Betrag.'
-                    : 'Geschätzter Betrag auf Basis deiner Tage.'}
+                  {payment ? 'Das ist dein festgelegter Betrag.' : 'Betrag auf Basis deiner Tage.'}
                 </p>
               </div>
 
@@ -482,7 +496,7 @@ export function UserDashboard() {
                         <StatCard label="Deine Tage" value={daysPresent.toString()} />
                         <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
                         <StatCard
-                          label={legacyDiscount > 0 ? 'Netto-Schätzung' : 'Erwartete Kosten'}
+                          label="Endsumme"
                           value={formatEur(netEstimate)}
                           color="yellow"
                         />
@@ -577,6 +591,8 @@ export function UserDashboard() {
             </div>
           </section>
         )}
+
+        </>}
 
       </div>
     </>
@@ -721,6 +737,8 @@ function LegacySurveySection({
   request,
   unmatchedCredits,
   config,
+  attending,
+  onSetAttending,
   onSkip,
   onAskName,
   onSubmitRequest,
@@ -734,6 +752,8 @@ function LegacySurveySection({
   request: LegacyCreditRequest | null
   unmatchedCredits: LegacyCredit[]
   config: FestivalConfig | null
+  attending: boolean | null
+  onSetAttending: (val: boolean) => void
   onSkip: () => void
   onAskName: () => Promise<void>
   onSubmitRequest: (creditId: string) => Promise<void>
@@ -744,13 +764,6 @@ function LegacySurveySection({
   const [selectedCredit, setSelectedCredit] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [deciding, setDeciding] = useState<LegacyDecisionType | null>(null)
-  // null = not asked yet; true = attending WWW7; false = not attending
-  const [attending, setAttending] = useState<boolean | null>(null)
-
-  // Reset attending question when phase returns to 'matched' (e.g. after changing decision)
-  useEffect(() => {
-    if (phase === 'matched') setAttending(null)
-  }, [phase])
 
   const DECISION_LABELS: Record<LegacyDecisionType, string> = {
     refund:      'Rückzahlung',
@@ -842,10 +855,10 @@ function LegacySurveySection({
               <div className="card-body space-y-4">
                 <p className="text-sm text-gray-200 font-medium">Bist du beim WWW7 dabei?</p>
                 <div className="flex gap-3">
-                  <button onClick={() => setAttending(true)} className="btn-primary text-sm">
+                  <button onClick={() => onSetAttending(true)} className="btn-primary text-sm">
                     Ja, ich komme
                   </button>
-                  <button onClick={() => setAttending(false)} className="btn-ghost text-sm">
+                  <button onClick={() => onSetAttending(false)} className="btn-ghost text-sm">
                     Nein, dieses Jahr nicht
                   </button>
                 </div>
