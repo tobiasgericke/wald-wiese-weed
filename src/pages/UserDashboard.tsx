@@ -52,7 +52,7 @@ export function UserDashboard() {
   }, [])
 
   useEffect(() => {
-    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status', 'sec-altguthaben']
+    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-altguthaben', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status']
     const observer = new IntersectionObserver(
       entries => {
         entries.forEach(entry => {
@@ -88,13 +88,22 @@ export function UserDashboard() {
     if (skipped) { setLegacyPhase('skipped'); return }
 
     supabase.rpc('try_automatch_legacy_credit').then(async ({ data }) => {
-      const result = data as { status: string; credit_id?: string; amount?: number; display_name?: string }
+      type RpcResult = { status: string; credit_id?: string; amount?: number; display_name?: string; confirmed?: boolean }
+      const result = data as RpcResult
       if (result?.status === 'matched' || result?.status === 'already_matched') {
-        const { data: credit } = await supabase
-          .from('legacy_credits').select('*').eq('matched_user_id', user.id).maybeSingle()
+        // Build credit object directly from RPC data — avoids a second RLS-restricted SELECT
+        const credit: LegacyCredit = {
+          id: result.credit_id ?? '',
+          display_name: result.display_name ?? '',
+          amount_owed: Number(result.amount ?? 0),
+          matched_user_id: user.id,
+          match_confirmed: true,
+          created_at: '',
+        }
+        setLegacyCredit(credit)
+        // Check for existing decision
         const { data: decision } = await supabase
           .from('legacy_credit_decisions').select('*').eq('user_id', user.id).maybeSingle()
-        setLegacyCredit(credit)
         setLegacyDecision(decision)
         setLegacyPhase(decision ? 'decided' : 'matched')
       } else {
@@ -152,10 +161,10 @@ export function UserDashboard() {
   const navLinks: { id: string; label: string }[] = [
     { id: 'sec-festival', label: 'Festival' },
     { id: 'sec-anwesenheit', label: 'Anwesenheit' },
+    ...(showLegacySection ? [{ id: 'sec-altguthaben', label: 'Altguthaben' }] : []),
     { id: 'sec-kosten', label: 'Kosten' },
     { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
     ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
-    ...(showLegacySection ? [{ id: 'sec-altguthaben', label: 'Altguthaben' }] : []),
   ]
 
   return (
@@ -267,15 +276,65 @@ export function UserDashboard() {
             )}
 
             <button
-              onClick={() => scrollTo('sec-kosten')}
+              onClick={() => scrollTo(showLegacySection ? 'sec-altguthaben' : 'sec-kosten')}
               className="text-sm text-gray-400 hover:text-green-400 transition-colors"
             >
-              Kostenvorschau ansehen ↓
+              {showLegacySection ? 'Zum Altguthaben ↓' : 'Kostenvorschau ansehen ↓'}
             </button>
           </div>
         </section>
 
-        {/* ── 2. Kostenvorschau ───────────────────────────────── */}
+        {/* ── 2. Altguthaben (WWW6) ───────────────────────────── */}
+        {showLegacySection && (
+          <section id="sec-altguthaben" className="snap-section">
+            <LegacySurveySection
+              phase={legacyPhase}
+              credit={legacyCredit}
+              decision={legacyDecision}
+              request={legacyRequest}
+              unmatchedCredits={unmatchedCredits}
+              config={config}
+              onSkip={() => {
+                localStorage.setItem(`wwwLegacySkip_${user!.id}`, '1')
+                setLegacyPhase('skipped')
+              }}
+              onAskName={async () => {
+                const { data } = await supabase
+                  .from('legacy_credits').select('*').is('matched_user_id', null).order('display_name')
+                setUnmatchedCredits(data ?? [])
+                setLegacyPhase('ask_name')
+              }}
+              onSubmitRequest={async (creditId: string) => {
+                const { data } = await supabase.rpc('submit_legacy_credit_request', { p_credit_id: creditId })
+                if ((data as { error?: string })?.error) return
+                const { data: req } = await supabase
+                  .from('legacy_credit_requests').select('*').eq('requesting_user_id', user!.id)
+                  .eq('status', 'pending').maybeSingle()
+                setLegacyRequest(req)
+                setLegacyPhase('request_pending')
+              }}
+              onDecide={async (decision: LegacyDecisionType) => {
+                if (!legacyCredit) return
+                await supabase.from('legacy_credit_decisions').insert({
+                  legacy_credit_id: legacyCredit.id,
+                  user_id: user!.id,
+                  decision,
+                })
+                setLegacyDecision({
+                  id: '',
+                  legacy_credit_id: legacyCredit.id,
+                  user_id: user!.id,
+                  decision,
+                  decided_at: new Date().toISOString(),
+                })
+                setLegacyPhase('decided')
+              }}
+              onNext={() => scrollTo('sec-kosten')}
+            />
+          </section>
+        )}
+
+        {/* ── 3. Kostenvorschau ───────────────────────────────── */}
         <section id="sec-kosten" className="snap-section">
           <div className="space-y-6">
             <div>
@@ -483,51 +542,6 @@ export function UserDashboard() {
           </section>
         )}
 
-        {/* ── 5. Altguthaben (WWW6) ───────────────────────────── */}
-        {showLegacySection && (
-          <section id="sec-altguthaben" className="snap-section">
-            <LegacySurveySection
-              phase={legacyPhase}
-              credit={legacyCredit}
-              decision={legacyDecision}
-              request={legacyRequest}
-              unmatchedCredits={unmatchedCredits}
-              config={config}
-              onSkip={() => {
-                localStorage.setItem(`wwwLegacySkip_${user!.id}`, '1')
-                setLegacyPhase('skipped')
-              }}
-              onAskName={async () => {
-                const { data } = await supabase
-                  .from('legacy_credits').select('*').is('matched_user_id', null).order('display_name')
-                setUnmatchedCredits(data ?? [])
-                setLegacyPhase('ask_name')
-              }}
-              onSubmitRequest={async (creditId: string) => {
-                const { data } = await supabase.rpc('submit_legacy_credit_request', { p_credit_id: creditId })
-                if ((data as { error?: string })?.error) return
-                const { data: req } = await supabase
-                  .from('legacy_credit_requests').select('*').eq('requesting_user_id', user!.id)
-                  .eq('status', 'pending').maybeSingle()
-                setLegacyRequest(req)
-                setLegacyPhase('request_pending')
-              }}
-              onDecide={async (decision: LegacyDecisionType) => {
-                if (!legacyCredit) return
-                await supabase.from('legacy_credit_decisions').insert({
-                  legacy_credit_id: legacyCredit.id,
-                  user_id: user!.id,
-                  decision,
-                })
-                const { data: dec } = await supabase
-                  .from('legacy_credit_decisions').select('*').eq('user_id', user!.id).maybeSingle()
-                setLegacyDecision(dec)
-                setLegacyPhase('decided')
-              }}
-            />
-          </section>
-        )}
-
       </div>
     </>
   )
@@ -675,6 +689,7 @@ function LegacySurveySection({
   onAskName,
   onSubmitRequest,
   onDecide,
+  onNext,
 }: {
   phase: LegacyPhase
   credit: LegacyCredit | null
@@ -686,6 +701,7 @@ function LegacySurveySection({
   onAskName: () => Promise<void>
   onSubmitRequest: (creditId: string) => Promise<void>
   onDecide: (decision: LegacyDecisionType) => Promise<void>
+  onNext: () => void
 }) {
   const [selectedCredit, setSelectedCredit] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -725,14 +741,19 @@ function LegacySurveySection({
       </div>
 
       {phase === 'decided' && decision && (
-        <div className="card">
-          <div className="card-body space-y-2">
-            <div className="badge-paid">Deine Entscheidung ist gespeichert.</div>
-            <p className="text-sm text-gray-300">
-              Guthaben: <span className="text-white font-semibold">{credit ? formatEur(credit.amount_owed) : '—'}</span>
-              {' · '}Wahl: <span className="text-green-400 font-semibold">{DECISION_LABELS[decision.decision]}</span>
-            </p>
+        <div className="space-y-4">
+          <div className="card">
+            <div className="card-body space-y-2">
+              <div className="badge-paid">Deine Entscheidung ist gespeichert.</div>
+              <p className="text-sm text-gray-300">
+                Guthaben: <span className="text-white font-semibold">{credit ? formatEur(credit.amount_owed) : '—'}</span>
+                {' · '}Wahl: <span className="text-green-400 font-semibold">{DECISION_LABELS[decision.decision]}</span>
+              </p>
+            </div>
           </div>
+          <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
+            Zur Kostenvorschau ↓
+          </button>
         </div>
       )}
 
@@ -821,12 +842,17 @@ function LegacySurveySection({
       )}
 
       {phase === 'request_pending' && (
-        <div className="card">
-          <div className="card-body">
-            <div className="badge-pending">
-              ⏳ Deine Anfrage ist eingegangen — wir bestätigen sie in Kürze.
+        <div className="space-y-4">
+          <div className="card">
+            <div className="card-body">
+              <div className="badge-pending">
+                ⏳ Deine Anfrage ist eingegangen — wir bestätigen sie in Kürze.
+              </div>
             </div>
           </div>
+          <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
+            Zur Kostenvorschau ↓
+          </button>
         </div>
       )}
 
