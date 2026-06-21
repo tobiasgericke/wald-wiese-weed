@@ -52,7 +52,7 @@ export function UserDashboard() {
   }, [])
 
   useEffect(() => {
-    const ids = ['sec-festival', 'sec-anwesenheit', 'sec-altguthaben', 'sec-kosten', 'sec-action', 'sec-zahlung', 'sec-status']
+    const ids = ['sec-festival', 'sec-altguthaben', 'sec-anwesenheit', 'sec-kosten', 'sec-action', 'sec-status']
     const observer = new IntersectionObserver(
       entries => {
         entries.forEach(entry => {
@@ -66,7 +66,7 @@ export function UserDashboard() {
       if (el) observer.observe(el)
     })
     return () => observer.disconnect()
-  }, [view])
+  }, [view, legacyPhase])
 
   useEffect(() => {
     if (!user) return
@@ -126,6 +126,8 @@ export function UserDashboard() {
 
   const handleAttendanceUpdate = (att: Attendance[]) => {
     setAttendance(att)
+    // Don't reset if payment is already marked paid — amount is settled
+    if (view === 'confirmed' && payment?.paid) return
     if (view === 'confirmed') setView('planning')
   }
 
@@ -154,14 +156,23 @@ export function UserDashboard() {
   const dailyRate = config?.daily_rate ?? 25
   const daysPresent = attendance.filter(a => a.present && a.day_index < numDays).length
   const estimatedCost = daysPresent * dailyRate
+
+  // Legacy credit discount — only when "apply_www7" was chosen
+  const legacyDiscount =
+    legacyDecision?.decision === 'apply_www7' && legacyCredit
+      ? Number(legacyCredit.amount_owed)
+      : 0
+  const netEstimate = Math.max(0, estimatedCost - legacyDiscount)
+
+  // remaining > 0 = still owed; remaining < 0 = overpaid (admin will refund); = 0 settled
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
   const showLegacySection = legacyPhase !== 'skipped' && legacyPhase !== 'loading'
 
   const navLinks: { id: string; label: string }[] = [
     { id: 'sec-festival', label: 'Festival' },
-    { id: 'sec-anwesenheit', label: 'Anwesenheit' },
     ...(showLegacySection ? [{ id: 'sec-altguthaben', label: 'Altguthaben' }] : []),
+    { id: 'sec-anwesenheit', label: 'Anwesenheit' },
     { id: 'sec-kosten', label: 'Kosten' },
     { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
     ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
@@ -232,10 +243,10 @@ export function UserDashboard() {
               )}
 
               <button
-                onClick={() => scrollTo('sec-anwesenheit')}
+                onClick={() => scrollTo(showLegacySection ? 'sec-altguthaben' : 'sec-anwesenheit')}
                 className="text-sm text-gray-400 hover:text-green-400 transition-colors"
               >
-                Zur Anwesenheit ↓
+                {showLegacySection ? 'Zum Altguthaben ↓' : 'Zur Anwesenheit ↓'}
               </button>
             </div>
           ) : (
@@ -248,43 +259,7 @@ export function UserDashboard() {
           )}
         </section>
 
-        {/* ── 1. Anwesenheit ──────────────────────────────────── */}
-        <section id="sec-anwesenheit" className="snap-section">
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-3xl font-black text-white leading-tight">
-                {firstName(profile)},<br />wann bist du dabei?
-              </h2>
-              <p className="text-gray-400 text-sm mt-2">
-                Tippe auf die Tage an denen du anwesend bist.
-              </p>
-            </div>
-
-            {config ? (
-              <AttendanceSection
-                user={user!}
-                config={config}
-                attendance={attendance}
-                onUpdate={handleAttendanceUpdate}
-              />
-            ) : (
-              <div className="card">
-                <div className="card-body py-6 text-center text-sm text-gray-400">
-                  Festival noch nicht konfiguriert.
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={() => scrollTo(showLegacySection ? 'sec-altguthaben' : 'sec-kosten')}
-              className="text-sm text-gray-400 hover:text-green-400 transition-colors"
-            >
-              {showLegacySection ? 'Zum Altguthaben ↓' : 'Kostenvorschau ansehen ↓'}
-            </button>
-          </div>
-        </section>
-
-        {/* ── 2. Altguthaben (WWW6) ───────────────────────────── */}
+        {/* ── 1. Altguthaben (WWW6) — vor Anwesenheit ────────── */}
         {showLegacySection && (
           <section id="sec-altguthaben" className="snap-section">
             <LegacySurveySection
@@ -315,24 +290,60 @@ export function UserDashboard() {
               }}
               onDecide={async (decision: LegacyDecisionType) => {
                 if (!legacyCredit) return
-                await supabase.from('legacy_credit_decisions').insert({
-                  legacy_credit_id: legacyCredit.id,
-                  user_id: user!.id,
-                  decision,
-                })
+                await supabase.from('legacy_credit_decisions').upsert(
+                  { legacy_credit_id: legacyCredit.id, user_id: user!.id, decision, decided_at: new Date().toISOString() },
+                  { onConflict: 'legacy_credit_id' }
+                )
                 setLegacyDecision({
-                  id: '',
-                  legacy_credit_id: legacyCredit.id,
-                  user_id: user!.id,
-                  decision,
-                  decided_at: new Date().toISOString(),
+                  id: '', legacy_credit_id: legacyCredit.id,
+                  user_id: user!.id, decision, decided_at: new Date().toISOString(),
                 })
                 setLegacyPhase('decided')
               }}
-              onNext={() => scrollTo('sec-kosten')}
+              onChangeDecision={() => {
+                setLegacyDecision(null)
+                setLegacyPhase('matched')
+              }}
+              onNext={() => scrollTo('sec-anwesenheit')}
             />
           </section>
         )}
+
+        {/* ── 2. Anwesenheit ──────────────────────────────────── */}
+        <section id="sec-anwesenheit" className="snap-section">
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-black text-white leading-tight">
+                {firstName(profile)},<br />wann bist du dabei?
+              </h2>
+              <p className="text-gray-400 text-sm mt-2">
+                Tippe auf die Tage an denen du anwesend bist.
+              </p>
+            </div>
+
+            {config ? (
+              <AttendanceSection
+                user={user!}
+                config={config}
+                attendance={attendance}
+                onUpdate={handleAttendanceUpdate}
+              />
+            ) : (
+              <div className="card">
+                <div className="card-body py-6 text-center text-sm text-gray-400">
+                  Festival noch nicht konfiguriert.
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => scrollTo('sec-kosten')}
+              className="text-sm text-gray-400 hover:text-green-400 transition-colors"
+            >
+              Kostenvorschau ansehen ↓
+            </button>
+          </div>
+        </section>
 
         {/* ── 3. Kostenvorschau ───────────────────────────────── */}
         <section id="sec-kosten" className="snap-section">
@@ -349,8 +360,24 @@ export function UserDashboard() {
                 <div className="grid grid-cols-3 gap-3">
                   <StatCard label="Deine Tage" value={daysPresent.toString()} />
                   <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
-                  <StatCard label="Geschätzte Kosten" value={formatEur(estimatedCost)} color="yellow" />
+                  <StatCard
+                    label={legacyDiscount > 0 ? 'Brutto-Kosten' : 'Geschätzte Kosten'}
+                    value={formatEur(estimatedCost)}
+                    color="yellow"
+                  />
                 </div>
+                {legacyDiscount > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Altguthaben (WWW6)</span>
+                      <span className="text-green-400">− {formatEur(legacyDiscount)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-bold border-t border-forest-700 pt-2">
+                      <span className="text-white">Netto-Schätzung</span>
+                      <span className="text-yellow-300">{formatEur(netEstimate)}</span>
+                    </div>
+                  </div>
+                )}
                 <p className="text-xs text-gray-400">
                   Endgültiger Betrag wird nach dem Festival aus den tatsächlichen Gesamtkosten berechnet.
                 </p>
@@ -384,7 +411,7 @@ export function UserDashboard() {
                         <p className="text-white font-semibold text-xl">
                           {daysPresent === 0
                             ? 'Keine Tage ausgewählt'
-                            : `${daysPresent} ${daysPresent === 1 ? 'Tag' : 'Tage'} · ${formatEur(estimatedCost)}`
+                            : `${daysPresent} ${daysPresent === 1 ? 'Tag' : 'Tage'} · ${formatEur(netEstimate)}`
                           }
                         </p>
                         <p className="text-gray-400 text-sm">
@@ -442,22 +469,31 @@ export function UserDashboard() {
                   <div className="grid grid-cols-3 gap-3">
                     {payment ? (
                       <>
-                        <StatCard label="Zu zahlen" value={formatEur(payment.amount_due)} />
+                        <StatCard label="Festgelegt" value={formatEur(payment.amount_due)} />
                         <StatCard label="Bezahlt" value={formatEur(payment.amount_paid)} color="green" />
                         <StatCard
-                          label="Offen"
-                          value={formatEur(remaining)}
-                          color={remaining > 0 ? 'red' : 'green'}
+                          label={remaining < 0 ? 'Rückzahlung' : remaining === 0 ? 'Abgeglichen' : 'Noch offen'}
+                          value={formatEur(Math.abs(remaining))}
+                          color={remaining < 0 ? 'green' : remaining === 0 ? 'green' : 'red'}
                         />
                       </>
                     ) : (
                       <>
                         <StatCard label="Deine Tage" value={daysPresent.toString()} />
                         <StatCard label="Tagessatz" value={config ? formatEur(dailyRate) : '—'} sub="/ Tag" />
-                        <StatCard label="Erwartete Kosten" value={formatEur(estimatedCost)} color="yellow" />
+                        <StatCard
+                          label={legacyDiscount > 0 ? 'Netto-Schätzung' : 'Erwartete Kosten'}
+                          value={formatEur(netEstimate)}
+                          color="yellow"
+                        />
                       </>
                     )}
                   </div>
+                  {!payment && legacyDiscount > 0 && (
+                    <p className="text-xs text-green-400 mt-2">
+                      Inkl. {formatEur(legacyDiscount)} Altguthaben-Abzug (WWW6)
+                    </p>
+                  )}
                   {payment?.notes && (
                     <p className="text-sm text-gray-300">{payment.notes}</p>
                   )}
@@ -689,6 +725,7 @@ function LegacySurveySection({
   onAskName,
   onSubmitRequest,
   onDecide,
+  onChangeDecision,
   onNext,
 }: {
   phase: LegacyPhase
@@ -701,37 +738,61 @@ function LegacySurveySection({
   onAskName: () => Promise<void>
   onSubmitRequest: (creditId: string) => Promise<void>
   onDecide: (decision: LegacyDecisionType) => Promise<void>
+  onChangeDecision: () => void
   onNext: () => void
 }) {
   const [selectedCredit, setSelectedCredit] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [deciding, setDeciding] = useState<LegacyDecisionType | null>(null)
+  // null = not asked yet; true = attending WWW7; false = not attending
+  const [attending, setAttending] = useState<boolean | null>(null)
 
-  const DECISION_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
-    { key: 'refund',      label: 'Zurückzahlen',       desc: 'Ich möchte das Geld zurück.',                      color: 'border-blue-600 hover:border-blue-400' },
-    { key: 'apply_www7',  label: 'Verrechnen',          desc: 'Mit meinen WWW7-Kosten verrechnen.',               color: 'border-green-600 hover:border-green-400' },
-    { key: 'donate_www',  label: 'Spende ans WWW',      desc: 'Das Geld bleibt in der Gemeinschaft.',             color: 'border-yellow-600 hover:border-yellow-400' },
-    ...(config?.donation_org1_name ? [{
-      key: 'donate_org1' as LegacyDecisionType,
-      label: `Spende: ${config.donation_org1_name}`,
-      desc: config.donation_org1_description ?? '',
-      color: 'border-purple-600 hover:border-purple-400',
-    }] : []),
-    ...(config?.donation_org2_name ? [{
-      key: 'donate_org2' as LegacyDecisionType,
-      label: `Spende: ${config.donation_org2_name}`,
-      desc: config.donation_org2_description ?? '',
-      color: 'border-pink-600 hover:border-pink-400',
-    }] : []),
-  ]
+  // Reset attending question when phase returns to 'matched' (e.g. after changing decision)
+  useEffect(() => {
+    if (phase === 'matched') setAttending(null)
+  }, [phase])
 
   const DECISION_LABELS: Record<LegacyDecisionType, string> = {
-    refund: 'Rückzahlung',
-    apply_www7: 'Verrechnung WWW7',
-    donate_www: 'Spende ans WWW',
+    refund:      'Rückzahlung',
+    apply_www7:  'Verrechnung WWW7',
+    donate_www:  'Spende ans WWW',
     donate_org1: config?.donation_org1_name ? `Spende: ${config.donation_org1_name}` : 'Spende Org 1',
     donate_org2: config?.donation_org2_name ? `Spende: ${config.donation_org2_name}` : 'Spende Org 2',
   }
+
+  // Options when NOT attending (only refund makes sense, no Verrechnung possible)
+  const NOT_ATTENDING_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
+    { key: 'refund',     label: 'Zurückzahlen',   desc: 'Wir überweisen dir das Geld zurück.',     color: 'border-blue-600 hover:border-blue-400' },
+    { key: 'donate_www', label: 'Spende ans WWW',  desc: 'Das Geld bleibt in der Gemeinschaft.',    color: 'border-yellow-600 hover:border-yellow-400' },
+    ...(config?.donation_org1_name ? [{ key: 'donate_org1' as LegacyDecisionType, label: `Spende: ${config.donation_org1_name}`, desc: config.donation_org1_description ?? '', color: 'border-purple-600 hover:border-purple-400' }] : []),
+    ...(config?.donation_org2_name ? [{ key: 'donate_org2' as LegacyDecisionType, label: `Spende: ${config.donation_org2_name}`, desc: config.donation_org2_description ?? '', color: 'border-pink-600 hover:border-pink-400' }] : []),
+  ]
+
+  // Options when attending (Rückzahlung not possible — credit goes against new costs or is donated)
+  const ATTENDING_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
+    { key: 'apply_www7', label: 'Mit WWW7-Kosten verrechnen', desc: 'Wird direkt von deinem Endbetrag abgezogen.',   color: 'border-green-600 hover:border-green-400' },
+    { key: 'donate_www', label: 'Spende ans WWW',              desc: 'Das Geld bleibt in der Gemeinschaft.',         color: 'border-yellow-600 hover:border-yellow-400' },
+    ...(config?.donation_org1_name ? [{ key: 'donate_org1' as LegacyDecisionType, label: `Spende: ${config.donation_org1_name}`, desc: config.donation_org1_description ?? '', color: 'border-purple-600 hover:border-purple-400' }] : []),
+    ...(config?.donation_org2_name ? [{ key: 'donate_org2' as LegacyDecisionType, label: `Spende: ${config.donation_org2_name}`, desc: config.donation_org2_description ?? '', color: 'border-pink-600 hover:border-pink-400' }] : []),
+  ]
+
+  const activeOptions = attending === false ? NOT_ATTENDING_OPTIONS : ATTENDING_OPTIONS
+
+  const DecisionButton = ({ opt }: { opt: typeof activeOptions[number] }) => (
+    <button
+      key={opt.key}
+      disabled={!!deciding}
+      onClick={async () => {
+        setDeciding(opt.key)
+        await onDecide(opt.key)
+        setDeciding(null)
+      }}
+      className={`w-full text-left p-4 rounded-xl border-2 bg-forest-800 transition-all ${deciding === opt.key ? 'opacity-50' : opt.color}`}
+    >
+      <p className="font-semibold text-white text-sm">{deciding === opt.key ? 'Wird gespeichert…' : opt.label}</p>
+      {opt.desc && <p className="text-xs text-gray-400 mt-0.5">{opt.desc}</p>}
+    </button>
+  )
 
   return (
     <div className="space-y-6">
@@ -740,79 +801,115 @@ function LegacySurveySection({
         <p className="text-gray-400 text-sm mt-2">Aus dem letzten WWW sind noch Gelder offen.</p>
       </div>
 
+      {/* ── Entscheidung gespeichert ─────────────────────────── */}
       {phase === 'decided' && decision && (
         <div className="space-y-4">
           <div className="card">
-            <div className="card-body space-y-2">
+            <div className="card-body space-y-3">
               <div className="badge-paid">Deine Entscheidung ist gespeichert.</div>
               <p className="text-sm text-gray-300">
                 Guthaben: <span className="text-white font-semibold">{credit ? formatEur(credit.amount_owed) : '—'}</span>
                 {' · '}Wahl: <span className="text-green-400 font-semibold">{DECISION_LABELS[decision.decision]}</span>
               </p>
+              <button
+                onClick={onChangeDecision}
+                className="text-xs text-gray-500 hover:text-yellow-300 transition-colors"
+              >
+                Entscheidung ändern
+              </button>
             </div>
           </div>
           <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
-            Zur Kostenvorschau ↓
+            Zur Anwesenheit ↓
           </button>
         </div>
       )}
 
+      {/* ── Match bestätigt — Survey ─────────────────────────── */}
       {phase === 'matched' && credit && (
         <div className="space-y-4">
           <div className="card">
             <div className="card-body">
-              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Dein Guthaben</p>
+              <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Dein Guthaben (WWW6)</p>
               <p className="text-3xl font-black text-yellow-300">{formatEur(credit.amount_owed)}</p>
-              <p className="text-xs text-gray-500 mt-1">aus WWW6 · {credit.display_name}</p>
+              <p className="text-xs text-gray-500 mt-1">{credit.display_name}</p>
             </div>
           </div>
-          <p className="text-sm text-gray-300 font-medium">Was soll damit passieren?</p>
-          <div className="space-y-2">
-            {DECISION_OPTIONS.map(opt => (
+
+          {/* Step 1: Bist du dieses Jahr dabei? */}
+          {attending === null && (
+            <div className="card">
+              <div className="card-body space-y-4">
+                <p className="text-sm text-gray-200 font-medium">Bist du beim WWW7 dabei?</p>
+                <div className="flex gap-3">
+                  <button onClick={() => setAttending(true)} className="btn-primary text-sm">
+                    Ja, ich komme
+                  </button>
+                  <button onClick={() => setAttending(false)} className="btn-ghost text-sm">
+                    Nein, dieses Jahr nicht
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Options based on answer */}
+          {attending !== null && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-300 font-medium">
+                {attending
+                  ? 'Was soll mit deinem Guthaben passieren?'
+                  : 'Was soll mit deinem Guthaben passieren?'
+                }
+              </p>
+              {attending && (
+                <p className="text-xs text-gray-500">
+                  Da du dieses Jahr dabei bist, kann das Guthaben nicht bar ausgezahlt werden.
+                </p>
+              )}
+              {activeOptions.map(opt => <DecisionButton key={opt.key} opt={opt} />)}
               <button
-                key={opt.key}
-                disabled={!!deciding}
-                onClick={async () => {
-                  setDeciding(opt.key)
-                  await onDecide(opt.key)
-                  setDeciding(null)
-                }}
-                className={`w-full text-left p-4 rounded-xl border-2 bg-forest-800 transition-all ${deciding === opt.key ? 'opacity-50' : opt.color}`}
+                onClick={() => setAttending(null)}
+                className="text-xs text-gray-600 hover:text-gray-400 transition-colors pt-1"
               >
-                <p className="font-semibold text-white text-sm">{deciding === opt.key ? 'Wird gespeichert…' : opt.label}</p>
-                {opt.desc && <p className="text-xs text-gray-400 mt-0.5">{opt.desc}</p>}
+                ← Zurück
               </button>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
+      {/* ── Kein Match — WWW6-Teilnahme prüfen ──────────────── */}
       {phase === 'no_match' && (
-        <div className="card">
-          <div className="card-body space-y-4">
-            <p className="text-sm text-gray-200">Warst du beim letzten WaldWieseWeed dabei?</p>
-            <div className="flex gap-3">
-              <button
-                onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
-                disabled={submitting}
-                className="btn-primary text-sm"
-              >
-                {submitting ? 'Lädt…' : 'Ja, ich war dabei'}
-              </button>
-              <button onClick={onSkip} className="btn-ghost text-sm">
-                Nein, erstes Mal
-              </button>
+        <div className="space-y-4">
+          <div className="card">
+            <div className="card-body space-y-4">
+              <p className="text-sm text-gray-200">Warst du beim letzten WaldWieseWeed (WWW6) dabei?</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
+                  disabled={submitting}
+                  className="btn-primary text-sm"
+                >
+                  {submitting ? 'Lädt…' : 'Ja, ich war dabei'}
+                </button>
+                <button onClick={onSkip} className="btn-ghost text-sm">
+                  Nein, erstes Mal
+                </button>
+              </div>
             </div>
           </div>
+          <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
+            Zur Anwesenheit ↓
+          </button>
         </div>
       )}
 
+      {/* ── Selbstzuordnung: Name auswählen ─────────────────── */}
       {phase === 'ask_name' && (
         <div className="card">
           <div className="card-body space-y-4">
-            <p className="text-sm text-gray-200">
-              Wähle deinen Namen aus der Liste des letzten Jahres:
-            </p>
+            <p className="text-sm text-gray-200">Wähle deinen Namen aus der Liste von WWW6:</p>
             <select
               value={selectedCredit}
               onChange={e => setSelectedCredit(e.target.value)}
@@ -841,36 +938,41 @@ function LegacySurveySection({
         </div>
       )}
 
+      {/* ── Anfrage ausstehend ───────────────────────────────── */}
       {phase === 'request_pending' && (
         <div className="space-y-4">
           <div className="card">
             <div className="card-body">
-              <div className="badge-pending">
-                ⏳ Deine Anfrage ist eingegangen — wir bestätigen sie in Kürze.
-              </div>
+              <div className="badge-pending">⏳ Anfrage eingegangen — wir bestätigen in Kürze.</div>
             </div>
           </div>
           <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
-            Zur Kostenvorschau ↓
+            Zur Anwesenheit ↓
           </button>
         </div>
       )}
 
+      {/* ── Anfrage abgelehnt ────────────────────────────────── */}
       {phase === 'request_rejected' && request && (
-        <div className="card">
-          <div className="card-body space-y-3">
-            <div className="badge-pending">Anfrage abgelehnt.</div>
-            {request.admin_note && (
-              <p className="text-xs text-gray-400">Hinweis: {request.admin_note}</p>
-            )}
-            <button
-              onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
-              disabled={submitting}
-              className="btn-ghost text-sm"
-            >
-              Erneut versuchen
-            </button>
+        <div className="space-y-4">
+          <div className="card">
+            <div className="card-body space-y-3">
+              <div className="badge-pending">Anfrage abgelehnt.</div>
+              {request.admin_note && (
+                <p className="text-xs text-gray-400">Hinweis: {request.admin_note}</p>
+              )}
+              <button
+                onClick={async () => { setSubmitting(true); await onAskName(); setSubmitting(false) }}
+                disabled={submitting}
+                className="btn-ghost text-sm"
+              >
+                Erneut versuchen
+              </button>
+            </div>
           </div>
+          <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
+            Zur Anwesenheit ↓
+          </button>
         </div>
       )}
     </div>
