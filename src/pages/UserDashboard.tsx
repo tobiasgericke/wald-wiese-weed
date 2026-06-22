@@ -106,10 +106,17 @@ export function UserDashboard() {
         const { data: decision } = await supabase
           .from('legacy_credit_decisions').select('*').eq('user_id', user.id).maybeSingle()
         setLegacyDecision(decision)
-        if (!decision) {
-          const stored = localStorage.getItem(`wwwLegacyAttending_${user.id}`)
-          if (stored !== null) setLegacyAttending(stored === 'true')
-        }
+        // Anwesenheit wiederherstellen: bei vorhandener Entscheidung aus der Wahl
+        // ableiten (apply_www7 ⇒ dabei, refund ⇒ nicht dabei), sonst aus localStorage.
+        // Sonst bliebe legacyAttending nach Re-Login null und die Folge-Sektionen
+        // (Anwesenheit/Kosten/Überweisung) würden trotz getroffener Wahl verschwinden.
+        const stored = localStorage.getItem(`wwwLegacyAttending_${user.id}`)
+        const attending =
+          decision?.decision === 'apply_www7' ? true
+          : decision?.decision === 'refund' ? false
+          : stored !== null ? stored === 'true'
+          : null
+        if (attending !== null) setLegacyAttending(attending)
         setLegacyPhase(decision ? 'decided' : 'matched')
       } else {
         // Check for pending/rejected request
