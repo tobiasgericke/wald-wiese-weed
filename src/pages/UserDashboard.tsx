@@ -289,7 +289,8 @@ export function UserDashboard() {
               attending={legacyAttending}
               onSetAttending={(val) => {
                 setLegacyAttending(val)
-                localStorage.setItem(`wwwLegacyAttending_${user!.id}`, String(val))
+                if (val === null) localStorage.removeItem(`wwwLegacyAttending_${user!.id}`)
+                else localStorage.setItem(`wwwLegacyAttending_${user!.id}`, String(val))
               }}
               onSkip={() => {
                 localStorage.setItem(`wwwLegacySkip_${user!.id}`, '1')
@@ -794,7 +795,7 @@ function LegacySurveySection({
   unmatchedCredits: LegacyCredit[]
   config: FestivalConfig | null
   attending: boolean | null
-  onSetAttending: (val: boolean) => void
+  onSetAttending: (val: boolean | null) => void
   onSkip: () => void
   onAskName: () => Promise<void>
   onSubmitRequest: (creditId: string) => Promise<void>
@@ -923,7 +924,7 @@ function LegacySurveySection({
               )}
               {activeOptions.map(opt => <DecisionButton key={opt.key} opt={opt} />)}
               <button
-                onClick={() => setAttending(null)}
+                onClick={() => onSetAttending(null)}
                 className="text-xs text-gray-600 hover:text-gray-400 transition-colors pt-1"
               >
                 ← Zurück
