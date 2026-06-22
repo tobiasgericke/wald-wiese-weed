@@ -5,14 +5,14 @@
 // Benötigte Secrets (im Supabase-Dashboard unter Edge Functions → notify → Secrets,
 // oder: supabase secrets set ...):
 //   RESEND_API_KEY   – API-Key von Resend
-//   MAIL_FROM        – optional, Absender (Default: 'WaldWieseWeed <noreply@waldwieseweed.de>')
+//   MAIL_FROM        – optional, Absender (Default: 'WaldWieseWeed <info@waldwieseweed.de>')
 //   MAIL_APP_URL     – optional, Link zur App (Default: 'https://waldwieseweed.de')
 // SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY werden automatisch injiziert.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
-const MAIL_FROM = Deno.env.get('MAIL_FROM') ?? 'WaldWieseWeed <noreply@waldwieseweed.de>'
+const MAIL_FROM = Deno.env.get('MAIL_FROM') ?? 'WaldWieseWeed <info@waldwieseweed.de>'
 const APP_URL = Deno.env.get('MAIL_APP_URL') ?? 'https://waldwieseweed.de'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
