@@ -173,8 +173,16 @@ export function UserDashboard() {
   const remaining = payment ? payment.amount_due - payment.amount_paid : 0
 
   const showLegacySection = legacyPhase !== 'skipped' && legacyPhase !== 'loading'
-  // Hide attendance/costs/action when legacy section is active and user is NOT attending WWW7
-  const showPostLegacySections = !showLegacySection || legacyAttending === true
+  // Planung sichtbar: kein Legacy-Gate, anwesender Rückkehrer, oder während der Admin-Prüfung
+  // (request_pending). So bleibt der Ablauf flüssig, während wir die Zuordnung prüfen.
+  const showPostLegacySections =
+    legacyPhase !== 'loading' &&
+    (!showLegacySection || legacyAttending === true || legacyPhase === 'request_pending')
+  // Überweisung erst freigeben, wenn der finale Preis feststeht: Altguthaben terminal
+  // (kein Rückkehrer = skipped, oder Entscheidung getroffen = decided) oder Admin hat den
+  // Betrag bereits gesetzt. Bei pending/matched-ohne-Entscheidung bleibt sie gesperrt.
+  const paymentReady =
+    legacyPhase === 'skipped' || legacyPhase === 'decided' || !!payment
 
   const navLinks: { id: string; label: string }[] = [
     { id: 'sec-festival', label: 'Festival' },
@@ -182,8 +190,8 @@ export function UserDashboard() {
     ...(showPostLegacySections ? [
       { id: 'sec-anwesenheit', label: 'Anwesenheit' },
       { id: 'sec-kosten', label: 'Kosten' },
-      { id: 'sec-action', label: view === 'confirmed' ? 'Überweisung' : 'Bestätigung' },
-      ...(view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
+      { id: 'sec-action', label: (!paymentReady || view === 'confirmed') ? 'Überweisung' : 'Bestätigung' },
+      ...(paymentReady && view === 'confirmed' ? [{ id: 'sec-status', label: 'Status' }] : []),
     ] : []),
   ]
 
@@ -397,6 +405,11 @@ export function UserDashboard() {
                     </div>
                   </div>
                 )}
+                {!paymentReady && showLegacySection && (
+                  <p className="text-xs text-gray-500 mt-3">
+                    Vorschau ohne Altguthaben — dein Guthaben wird nach der Bestätigung verrechnet.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -404,13 +417,37 @@ export function UserDashboard() {
               onClick={() => scrollTo('sec-action')}
               className="text-sm text-gray-400 hover:text-green-400 transition-colors"
             >
-              {view === 'confirmed' ? 'Zur Überweisung ↓' : 'Zur Bestätigung ↓'}
+              {(!paymentReady || view === 'confirmed') ? 'Zur Überweisung ↓' : 'Zur Bestätigung ↓'}
             </button>
           </div>
         </section>
 
+        {/* ── 3·Gate. Altguthaben in Prüfung → Überweisung noch gesperrt ── */}
+        {!paymentReady && (
+          <section id="sec-action" className="snap-section">
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-black text-white">Überweisung</h2>
+                <p className="text-gray-400 text-sm mt-2">Dein finaler Betrag steht noch nicht fest.</p>
+              </div>
+              <div className="card">
+                <div className="card-body space-y-3">
+                  <div className="badge-pending">⏳ Wir prüfen gerade deine Altguthaben-Zuordnung.</div>
+                  <p className="text-sm text-gray-300">
+                    Sobald wir deine Zuordnung bestätigt haben, legen wir deinen finalen Betrag fest —
+                    erst dann siehst du hier den Überweisungsbetrag und die Bankdaten.
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Deine Anwesenheit kannst du oben in der Zwischenzeit schon planen.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ── 3a. Bestätigung / Skeleton (planning & calculating) */}
-        {(view === 'planning' || view === 'calculating') && (
+        {paymentReady && (view === 'planning' || view === 'calculating') && (
           <section id="sec-action" className="snap-section">
             <div className="space-y-6">
               {view === 'planning' ? (
@@ -467,7 +504,7 @@ export function UserDashboard() {
         )}
 
         {/* ── 3b. Überweisung: Betrag + Bankdaten (confirmed) ── */}
-        {view === 'confirmed' && (
+        {paymentReady && view === 'confirmed' && (
           <section id="sec-action" className="snap-section">
             <div className="space-y-6">
               <div>
@@ -560,7 +597,7 @@ export function UserDashboard() {
         )}
 
         {/* ── 4. Zahlungsstatus (confirmed) ───────────────────── */}
-        {view === 'confirmed' && (
+        {paymentReady && view === 'confirmed' && (
           <section id="sec-status" className="snap-section">
             <div className="space-y-6">
               <div>
@@ -934,9 +971,17 @@ function LegacySurveySection({
             >
               <option value="">— Namen auswählen —</option>
               {unmatchedCredits.map(c => (
-                <option key={c.id} value={c.id}>{c.display_name} · {formatEur(c.amount_owed)}</option>
+                <option key={c.id} value={c.id}>{c.display_name}</option>
               ))}
             </select>
+            {selectedCredit && (
+              <div className="rounded-xl border border-forest-600 bg-forest-800 p-3">
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Hinterlegtes Guthaben</p>
+                <p className="text-2xl font-black text-yellow-300">
+                  {formatEur(unmatchedCredits.find(c => c.id === selectedCredit)?.amount_owed ?? 0)}
+                </p>
+              </div>
+            )}
             <button
               disabled={!selectedCredit || submitting}
               onClick={async () => {
