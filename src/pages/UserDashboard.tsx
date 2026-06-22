@@ -642,18 +642,22 @@ function AttendanceSection({
 
   const toggle = async (dayIndex: number) => {
     setSaving(dayIndex)
-    const existing = attendance.find(a => a.day_index === dayIndex)
     const nowPresent = !isPresent(dayIndex)
-    if (existing) {
-      await supabase.from('attendance').update({ present: nowPresent }).eq('id', existing.id)
-      onUpdate(attendance.map(a => a.day_index === dayIndex ? { ...a, present: nowPresent } : a))
-    } else {
-      const { data } = await supabase
-        .from('attendance')
-        .insert({ user_id: user.id, day_index: dayIndex, present: true })
-        .select()
-        .single()
-      if (data) onUpdate([...attendance, data])
+    const { data } = await supabase
+      .from('attendance')
+      .upsert(
+        { user_id: user.id, day_index: dayIndex, present: nowPresent },
+        { onConflict: 'user_id,day_index' },
+      )
+      .select()
+      .single()
+    if (data) {
+      const exists = attendance.some(a => a.day_index === dayIndex)
+      onUpdate(
+        exists
+          ? attendance.map(a => (a.day_index === dayIndex ? data : a))
+          : [...attendance, data],
+      )
     }
     setSaving(null)
   }
