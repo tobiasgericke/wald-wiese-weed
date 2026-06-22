@@ -258,6 +258,29 @@ begin
 end;
 $$;
 
+-- Mail-Helfer für die notify-Edge-Function (umgeht die Service-Role).
+-- Liefert die Mail-Adressen aller Admins (für "neue Anfrage"-Benachrichtigung).
+create or replace function public.notify_admin_emails()
+returns setof text
+language sql security definer set search_path = public stable as $$
+  select email from public.profiles where is_admin = true
+$$;
+
+-- Liefert email/first_name/name eines Nutzers – aber NUR wenn der Aufrufer Admin ist.
+create or replace function public.notify_get_recipient(p_user_id uuid)
+returns json
+language plpgsql security definer set search_path = public stable as $$
+declare r json;
+begin
+  if not exists (select 1 from public.profiles where id = auth.uid() and is_admin = true) then
+    return null;
+  end if;
+  select json_build_object('email', email, 'first_name', first_name, 'name', name)
+    into r from public.profiles where id = p_user_id;
+  return r;
+end;
+$$;
+
 -- ──────────────────────────────────────────────────────────────────────────────
 -- Trigger
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -284,6 +307,8 @@ grant execute on function public.try_automatch_legacy_credit()           to auth
 grant execute on function public.submit_legacy_credit_request(uuid)      to authenticated;
 grant execute on function public.approve_legacy_credit_request(uuid)     to authenticated;
 grant execute on function public.reject_legacy_credit_request(uuid,text) to authenticated;
+grant execute on function public.notify_admin_emails()                   to authenticated;
+grant execute on function public.notify_get_recipient(uuid)              to authenticated;
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- RLS-Policies
