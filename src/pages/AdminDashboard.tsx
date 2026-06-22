@@ -81,7 +81,7 @@ export function AdminDashboard() {
   const pendingRequests = legacyRequests.filter(r => r.status === 'pending')
 
   const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'participants', label: 'Teilnehmer' },
+    { key: 'participants', label: 'Teilnehmer:innen' },
     { key: 'attendance', label: 'Anwesenheit' },
     { key: 'costs', label: 'Kosten' },
     { key: 'config', label: 'Festival-Infos' },
@@ -103,7 +103,7 @@ export function AdminDashboard() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <SummaryCard label="Teilnehmer" value={participants.length.toString()} />
+          <SummaryCard label="Teilnehmer:innen" value={participants.length.toString()} />
           <SummaryCard label="Personentage" value={totalPersonDays.toString()} />
           <SummaryCard label="Gesamtkosten" value={formatEur(totalCosts)} />
           <SummaryCard label="Echt. Tagessatz" value={formatEur(actualDailyRate)} />
@@ -623,7 +623,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
         </Field>
 
         <h2 className="card-title pt-1">Bankverbindung</h2>
-        <Field label="Empfänger">
+        <Field label="Empfänger:in">
           <input {...f('bank_recipient')} className="input-sm w-full" />
         </Field>
         <Field label="Bank">
@@ -635,7 +635,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
         <Field label="Verwendungszweck">
           <input {...f('payment_reference')} className="input-sm w-full" placeholder="z.B. WaldWieseWeed25 {Name}" />
           <p className="text-xs text-gray-500 mt-1">
-            <code className="bg-forest-800 px-1 rounded">{'{Name}'}</code> wird durch den vollen Namen des Teilnehmers ersetzt.
+            <code className="bg-forest-800 px-1 rounded">{'{Name}'}</code> wird durch den vollen Namen der Person ersetzt.
           </p>
         </Field>
 
@@ -650,7 +650,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
           <input {...f('donation_org1_url')} className="input-sm w-full" placeholder="https://..." type="url" />
         </Field>
         <Field label="Organisation 1 — Beschreibung">
-          <input {...f('donation_org1_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer" />
+          <input {...f('donation_org1_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer:innen" />
         </Field>
         <Field label="Organisation 2 — Name">
           <input {...f('donation_org2_name')} className="input-sm w-full" placeholder="z.B. WWF" />
@@ -659,14 +659,14 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
           <input {...f('donation_org2_url')} className="input-sm w-full" placeholder="https://..." type="url" />
         </Field>
         <Field label="Organisation 2 — Beschreibung">
-          <input {...f('donation_org2_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer" />
+          <input {...f('donation_org2_description')} className="input-sm w-full" placeholder="Kurze Beschreibung für die Teilnehmer:innen" />
         </Field>
 
         <h2 className="card-title pt-1">Sonstiges</h2>
         <Field label="Zahlungsdeadline">
           <input type="date" {...f('payment_deadline')} className="input-sm w-full" />
         </Field>
-        <Field label="Hinweise für Teilnehmer">
+        <Field label="Hinweise für Teilnehmer:innen">
           <textarea {...f('notes')} rows={3} className="input-sm w-full resize-none" />
         </Field>
 

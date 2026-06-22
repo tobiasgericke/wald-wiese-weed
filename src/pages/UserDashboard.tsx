@@ -561,7 +561,7 @@ export function UserDashboard() {
                     <h3 className="card-title">Bankverbindung</h3>
                   </div>
                   <div className="card-body pt-4 space-y-3">
-                    <InfoRow label="Empfänger" value={config.bank_recipient ?? '—'} />
+                    <InfoRow label="Empfänger:in" value={config.bank_recipient ?? '—'} />
                     <InfoRow label="Bank" value={config.bank_name ?? '—'} />
                     <InfoRow label="IBAN" value={config.bank_iban} mono />
                     {payment && remaining > 0 && (
