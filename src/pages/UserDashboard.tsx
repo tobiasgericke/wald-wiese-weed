@@ -310,6 +310,8 @@ export function UserDashboard() {
                   .eq('status', 'pending').maybeSingle()
                 setLegacyRequest(req)
                 setLegacyPhase('request_pending')
+                // Admins über die neue Anfrage informieren (best effort)
+                supabase.functions.invoke('notify', { body: { type: 'new_request' } }).catch(() => {})
               }}
               onDecide={async (decision: LegacyDecisionType) => {
                 if (!legacyCredit) return

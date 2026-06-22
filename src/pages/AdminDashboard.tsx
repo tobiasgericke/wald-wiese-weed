@@ -216,6 +216,7 @@ function ParticipantsTab({
   const togglePaid = async (p: ParticipantWithPayment) => {
     const days = daysPresent(p.attendance, numDays)
     const amountDue = Math.max(0, days * advanceRate - getLegacyDiscount(p.id))
+    const nowPaid = !p.payment || !p.payment.paid
     if (!p.payment) {
       await supabase.from('participant_payments').insert({
         user_id: p.id,
@@ -234,6 +235,8 @@ function ParticipantsTab({
         })
         .eq('id', p.payment.id)
     }
+    // Nutzer benachrichtigen, sobald die Zahlung als eingegangen markiert wird (best effort)
+    if (nowPaid) supabase.functions.invoke('notify', { body: { type: 'payment_confirmed', userId: p.id } }).catch(() => {})
     onRefresh()
   }
 
@@ -745,9 +748,15 @@ function LegacyTab({
     return s + (credit?.amount_owed ?? 0)
   }, 0)
 
+  const notifyDecision = (requestId: string, status: 'approved' | 'rejected') => {
+    const userId = requests.find(r => r.id === requestId)?.requesting_user_id
+    if (userId) supabase.functions.invoke('notify', { body: { type: 'decision', userId, status } }).catch(() => {})
+  }
+
   const approve = async (requestId: string) => {
     setWorking(requestId)
     await supabase.rpc('approve_legacy_credit_request', { p_request_id: requestId })
+    notifyDecision(requestId, 'approved')
     setWorking(null)
     onRefresh()
   }
@@ -755,6 +764,7 @@ function LegacyTab({
   const reject = async (requestId: string) => {
     setWorking(requestId)
     await supabase.rpc('reject_legacy_credit_request', { p_request_id: requestId, p_note: rejectNote || null })
+    notifyDecision(requestId, 'rejected')
     setRejectId(null)
     setRejectNote('')
     setWorking(null)
