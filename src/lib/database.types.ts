@@ -47,6 +47,7 @@ export interface Database {
           payment_deadline: string | null
           payment_reference: string | null
           notes: string | null
+          donation_www_description: string | null
           donation_org1_name: string | null
           donation_org1_url: string | null
           donation_org1_description: string | null
@@ -68,6 +69,7 @@ export interface Database {
           payment_deadline?: string | null
           payment_reference?: string | null
           notes?: string | null
+          donation_www_description?: string | null
           donation_org1_name?: string | null
           donation_org1_url?: string | null
           donation_org1_description?: string | null
@@ -89,6 +91,7 @@ export interface Database {
           payment_deadline?: string | null
           payment_reference?: string | null
           notes?: string | null
+          donation_www_description?: string | null
           donation_org1_name?: string | null
           donation_org1_url?: string | null
           donation_org1_description?: string | null

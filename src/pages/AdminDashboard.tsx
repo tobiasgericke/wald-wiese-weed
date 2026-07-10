@@ -545,6 +545,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
     payment_deadline: config?.payment_deadline ?? '',
     payment_reference: config?.payment_reference ?? '',
     notes: config?.notes ?? '',
+    donation_www_description: config?.donation_www_description ?? '',
     donation_org1_name: config?.donation_org1_name ?? '',
     donation_org1_url: config?.donation_org1_url ?? '',
     donation_org1_description: config?.donation_org1_description ?? '',
@@ -571,6 +572,7 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
       payment_deadline: form.payment_deadline || null,
       payment_reference: form.payment_reference || null,
       notes: form.notes || null,
+      donation_www_description: form.donation_www_description || null,
       donation_org1_name: form.donation_org1_name || null,
       donation_org1_url: form.donation_org1_url || null,
       donation_org1_description: form.donation_org1_description || null,
@@ -640,8 +642,14 @@ function ConfigTab({ config, onRefresh }: { config: FestivalConfig | null; onRef
         </Field>
 
         <h2 className="card-title pt-1">Altguthaben — Spendenorganisationen</h2>
-        <p className="text-xs text-gray-500 -mt-3">
-          Zwei konfigurierbare Spendenoptionen für das Altguthaben-Survey (leer lassen = nicht anzeigen).
+        <Field label="Spende ans WWW — Beschreibung">
+          <input {...f('donation_www_description')} className="input-sm w-full" placeholder="Das Geld bleibt in der Gemeinschaft." />
+          <p className="text-xs text-gray-500 mt-1">
+            Beschreibung der Option „Spende ans WWW“ (leer lassen = Standardtext).
+          </p>
+        </Field>
+        <p className="text-xs text-gray-500">
+          Zwei zusätzliche konfigurierbare Spendenoptionen für das Altguthaben-Survey (leer lassen = nicht anzeigen).
         </p>
         <Field label="Organisation 1 — Name">
           <input {...f('donation_org1_name')} className="input-sm w-full" placeholder="z.B. Greenpeace" />

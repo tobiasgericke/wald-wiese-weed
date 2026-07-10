@@ -627,7 +627,7 @@ export function UserDashboard() {
                     </div>
                   ) : (
                     <div className="badge-pending">
-                      ⏳ Betrag noch nicht festgelegt — wird nach dem Festival berechnet
+                      ⏳ Warte auf Bestätigung der Einzahlung
                     </div>
                   )}
                   <p className="text-xs text-gray-400 mt-2">
@@ -827,7 +827,7 @@ function LegacySurveySection({
   // Options when NOT attending (only refund makes sense, no Verrechnung possible)
   const NOT_ATTENDING_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
     { key: 'refund',     label: 'Zurückzahlen',   desc: 'Wir überweisen dir das Geld zurück.',     color: 'border-blue-600 hover:border-blue-400' },
-    { key: 'donate_www', label: 'Spende ans WWW',  desc: 'Das Geld bleibt in der Gemeinschaft.',    color: 'border-yellow-600 hover:border-yellow-400' },
+    { key: 'donate_www', label: 'Spende ans WWW',  desc: config?.donation_www_description ?? 'Das Geld bleibt in der Gemeinschaft.',    color: 'border-yellow-600 hover:border-yellow-400' },
     ...(config?.donation_org1_name ? [{ key: 'donate_org1' as LegacyDecisionType, label: `Spende: ${config.donation_org1_name}`, desc: config.donation_org1_description ?? '', color: 'border-purple-600 hover:border-purple-400' }] : []),
     ...(config?.donation_org2_name ? [{ key: 'donate_org2' as LegacyDecisionType, label: `Spende: ${config.donation_org2_name}`, desc: config.donation_org2_description ?? '', color: 'border-pink-600 hover:border-pink-400' }] : []),
   ]
@@ -835,7 +835,7 @@ function LegacySurveySection({
   // Options when attending (Rückzahlung not possible — credit goes against new costs or is donated)
   const ATTENDING_OPTIONS: { key: LegacyDecisionType; label: string; desc: string; color: string }[] = [
     { key: 'apply_www7', label: 'Mit WWW7-Kosten verrechnen', desc: 'Wird direkt von deinem Endbetrag abgezogen.',   color: 'border-green-600 hover:border-green-400' },
-    { key: 'donate_www', label: 'Spende ans WWW',              desc: 'Das Geld bleibt in der Gemeinschaft.',         color: 'border-yellow-600 hover:border-yellow-400' },
+    { key: 'donate_www', label: 'Spende ans WWW',              desc: config?.donation_www_description ?? 'Das Geld bleibt in der Gemeinschaft.',         color: 'border-yellow-600 hover:border-yellow-400' },
     ...(config?.donation_org1_name ? [{ key: 'donate_org1' as LegacyDecisionType, label: `Spende: ${config.donation_org1_name}`, desc: config.donation_org1_description ?? '', color: 'border-purple-600 hover:border-purple-400' }] : []),
     ...(config?.donation_org2_name ? [{ key: 'donate_org2' as LegacyDecisionType, label: `Spende: ${config.donation_org2_name}`, desc: config.donation_org2_description ?? '', color: 'border-pink-600 hover:border-pink-400' }] : []),
   ]
