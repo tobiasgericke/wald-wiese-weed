@@ -9,6 +9,8 @@ interface AuthContextValue {
   session: Session | null
   profile: Profile | null
   loading: boolean
+  recovery: boolean
+  clearRecovery: () => void
   signOut: () => Promise<void>
 }
 
@@ -19,6 +21,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  // Flag aus index.html (Fragment) vorbelegen; das PASSWORD_RECOVERY-Event
+  // aus onAuthStateChange bestätigt es zusätzlich.
+  const [recovery, setRecovery] = useState<boolean>(
+    () => sessionStorage.getItem('pw_recovery') === '1',
+  )
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -26,13 +33,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        sessionStorage.setItem('pw_recovery', '1')
+        setRecovery(true)
+      }
       setSession(session)
       setUser(session?.user ?? null)
     })
 
     return () => subscription.unsubscribe()
   }, [])
+
+  const clearRecovery = () => {
+    sessionStorage.removeItem('pw_recovery')
+    setRecovery(false)
+  }
 
   useEffect(() => {
     if (!user) {
@@ -57,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ user, session, profile, loading, recovery, clearRecovery, signOut }}>
       {children}
     </AuthContext.Provider>
   )

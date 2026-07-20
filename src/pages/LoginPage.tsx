@@ -70,6 +70,12 @@ export function LoginPage() {
               >
                 {loading ? 'Wird angemeldet…' : 'Anmelden'}
               </button>
+
+              <p className="text-center text-sm pt-1">
+                <Link to="/forgot-password" className="text-gray-500 hover:text-gray-400">
+                  Passwort vergessen?
+                </Link>
+              </p>
             </form>
 
             <p className="text-center text-sm text-gray-500 pt-2">
