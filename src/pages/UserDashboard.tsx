@@ -322,14 +322,18 @@ export function UserDashboard() {
               }}
               onDecide={async (decision: LegacyDecisionType) => {
                 if (!legacyCredit) return
-                await supabase.from('legacy_credit_decisions').upsert(
-                  { legacy_credit_id: legacyCredit.id, user_id: user!.id, decision, decided_at: new Date().toISOString() },
-                  { onConflict: 'legacy_credit_id' }
-                )
+                // RPC statt direktem Upsert: schreibt die Entscheidung UND rechnet einen
+                // bereits festgeschriebenen (unbezahlten) Betrag neu, damit ein Wechsel
+                // verrechnen ⇄ spenden sofort im festgelegten Betrag greift.
+                await supabase.rpc('set_legacy_decision', { p_decision: decision })
                 setLegacyDecision({
                   id: '', legacy_credit_id: legacyCredit.id,
                   user_id: user!.id, decision, decided_at: new Date().toISOString(),
                 })
+                // Festgeschriebenen Betrag neu laden, falls der Admin ihn schon gesetzt hat
+                const { data: pay } = await supabase
+                  .from('participant_payments').select('*').eq('user_id', user!.id).maybeSingle()
+                setPayment(pay)
                 setLegacyPhase('decided')
               }}
               onChangeDecision={() => {
