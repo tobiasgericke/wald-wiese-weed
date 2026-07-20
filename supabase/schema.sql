@@ -258,20 +258,50 @@ begin
 end;
 $$;
 
--- User setzt seine Altguthaben-Entscheidung UND rechnet einen bereits festgeschriebenen
--- (noch unbezahlten) Zahlungsbetrag neu. Ohne diese Neuberechnung blieb amount_due ein
--- veralteter Schnappschuss, wenn nach dem Festlegen von verrechnen (apply_www7) auf
--- spenden gewechselt wurde. Formel identisch zum Admin-Dashboard.
-create or replace function public.set_legacy_decision(p_decision text)
-returns json language plpgsql security definer set search_path to 'public' as $$
+-- Gemeinsame Recompute-Logik für amount_due (nur unbezahlte Zeilen). Formel identisch
+-- zum Admin-Dashboard: max(0, Tage_present(day_index<num_days) × daily_rate − Abzug),
+-- Abzug nur bei Entscheidung apply_www7. Von den Wrappern unten geteilt, damit
+-- Entscheidungs- und Anwesenheits-Pfad nicht auseinanderdriften. Bleibt intern.
+create or replace function public._recompute_payment_due(p_uid uuid)
+returns numeric language plpgsql security definer set search_path to 'public' as $$
 declare
-  v_uid      uuid := auth.uid();
-  v_credit   legacy_credits%rowtype;
   v_days     integer;
   v_rate     numeric(10,2);
   v_ndays    integer;
   v_discount numeric(10,2);
   v_due      numeric(10,2);
+begin
+  select num_days, daily_rate into v_ndays, v_rate from festival_config where id = 1;
+  select count(*) into v_days from attendance
+    where user_id = p_uid and present and day_index < v_ndays;
+  select lc.amount_owed into v_discount
+    from legacy_credit_decisions d
+    join legacy_credits lc on lc.id = d.legacy_credit_id
+    where d.user_id = p_uid and d.decision = 'apply_www7'
+    limit 1;
+  v_discount := coalesce(v_discount, 0);
+  v_due := greatest(0, v_days * v_rate - v_discount);
+
+  update participant_payments
+    set amount_due = v_due
+    where user_id = p_uid and paid = false;
+
+  return v_due;
+end;
+$$;
+
+revoke execute on function public._recompute_payment_due(uuid) from public;
+
+-- User setzt seine Altguthaben-Entscheidung UND rechnet einen bereits festgeschriebenen
+-- (noch unbezahlten) Betrag neu. Ohne die Neuberechnung blieb amount_due ein veralteter
+-- Schnappschuss, wenn nach dem Festlegen von verrechnen (apply_www7) auf spenden
+-- gewechselt wurde.
+create or replace function public.set_legacy_decision(p_decision text)
+returns json language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_credit legacy_credits%rowtype;
+  v_due    numeric(10,2);
 begin
   if v_uid is null then
     return json_build_object('error','Nicht angemeldet');
@@ -291,18 +321,26 @@ begin
     on conflict (legacy_credit_id)
     do update set decision = excluded.decision, decided_at = excluded.decided_at, user_id = excluded.user_id;
 
-  -- Nur unbezahlte Zeilen neu berechnen; bezahlte Beträge sind final.
-  select num_days, daily_rate into v_ndays, v_rate from festival_config where id = 1;
-  select count(*) into v_days from attendance
-    where user_id = v_uid and present and day_index < v_ndays;
-  v_discount := case when p_decision = 'apply_www7' then v_credit.amount_owed else 0 end;
-  v_due := greatest(0, v_days * v_rate - v_discount);
-
-  update participant_payments
-    set amount_due = v_due
-    where user_id = v_uid and paid = false;
+  -- Betrag neu berechnen (liest die gerade geschriebene Entscheidung)
+  v_due := public._recompute_payment_due(v_uid);
 
   return json_build_object('status','ok', 'amount_due', v_due);
+end;
+$$;
+
+-- Recompute für den aufrufenden User, ausgelöst z. B. nach "Anwesenheit bestätigen",
+-- damit geänderte Tage sofort im festgelegten (unbezahlten) Betrag greifen.
+create or replace function public.recompute_my_payment()
+returns json language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_uid uuid := auth.uid();
+  v_due numeric(10,2);
+begin
+  if v_uid is null then
+    return json_build_object('error','Nicht angemeldet');
+  end if;
+  v_due := public._recompute_payment_due(v_uid);
+  return json_build_object('status','ok','amount_due', v_due);
 end;
 $$;
 
@@ -356,6 +394,7 @@ grant execute on function public.submit_legacy_credit_request(uuid)      to auth
 grant execute on function public.approve_legacy_credit_request(uuid)     to authenticated;
 grant execute on function public.reject_legacy_credit_request(uuid,text) to authenticated;
 grant execute on function public.set_legacy_decision(text)               to authenticated;
+grant execute on function public.recompute_my_payment()                  to authenticated;
 grant execute on function public.notify_admin_emails()                   to authenticated;
 grant execute on function public.notify_get_recipient(uuid)              to authenticated;
 

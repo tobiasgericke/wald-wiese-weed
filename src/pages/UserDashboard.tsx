@@ -146,6 +146,16 @@ export function UserDashboard() {
   const handleConfirm = () => {
     setView('calculating')
     scrollTo('sec-action')
+    // Anwesenheit ist bereits gespeichert (Toggle persistiert sofort). Falls schon ein
+    // unbezahlter Betrag festgelegt wurde, hier neu berechnen, damit geänderte Tage sofort
+    // im festgelegten Betrag greifen (No-Op, wenn noch keine Zahlung existiert).
+    void (async () => {
+      if (!user) return
+      await supabase.rpc('recompute_my_payment')
+      const { data: pay } = await supabase
+        .from('participant_payments').select('*').eq('user_id', user.id).maybeSingle()
+      setPayment(pay)
+    })()
     setTimeout(() => {
       setView('confirmed')
       if (user) localStorage.setItem(`wwwConfirmed_${user.id}`, '1')
