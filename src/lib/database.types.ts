@@ -186,14 +186,22 @@ export interface Database {
         Row: {
           id: string
           legacy_credit_id: string
-          user_id: string
+          // null, wenn ein Admin die Entscheidung für jemanden ohne Account pflegt
+          user_id: string | null
+          set_by_admin_id: string | null
           decision: 'refund' | 'apply_www7' | 'donate_www' | 'donate_org1' | 'donate_org2'
           decided_at: string
+          // gesetzt = ausgezahlt/abgeführt; die Entscheidung ist dann eingefroren
+          settled_at: string | null
+          settled_by: string | null
         }
         Insert: {
           id?: string
           legacy_credit_id: string
-          user_id: string
+          user_id?: string | null
+          set_by_admin_id?: string | null
+          settled_at?: string | null
+          settled_by?: string | null
           decision: 'refund' | 'apply_www7' | 'donate_www' | 'donate_org1' | 'donate_org2'
           decided_at?: string
         }

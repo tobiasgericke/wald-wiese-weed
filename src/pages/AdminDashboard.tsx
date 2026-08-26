@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Navbar } from '../components/Navbar'
-import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance, LegacyCredit, LegacyCreditRequest, LegacyCreditDecision } from '../lib/database.types'
+import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance, LegacyCredit, LegacyCreditRequest, LegacyCreditDecision, LegacyDecisionType } from '../lib/database.types'
 
 function fullName(profile: Profile): string {
   const fn = profile.first_name?.trim()
@@ -63,6 +63,9 @@ export function AdminDashboard() {
   const numDays = config?.num_days ?? 4
   const totalCosts = costItems.reduce((s, i) => s + i.amount, 0)
   const totalPersonDays = participants.reduce((s, p) => s + daysPresent(p.attendance, numDays), 0)
+  // Nur wer mindestens einen Tag da ist, zählt als Teilnehmer:in. Wer sich lediglich für
+  // die Altguthaben-Entscheidung registriert hat (0 Tage), gehört nicht in die Gesamtzahl.
+  const attendingCount = participants.filter(p => daysPresent(p.attendance, numDays) > 0).length
   const actualDailyRate = totalPersonDays > 0 ? totalCosts / totalPersonDays : 0
   const totalPaid = participants.reduce((s, p) => s + (p.payment?.amount_paid ?? 0), 0)
   const surplus = totalPaid - totalCosts
@@ -103,7 +106,7 @@ export function AdminDashboard() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <SummaryCard label="Teilnehmer:innen" value={participants.length.toString()} />
+          <SummaryCard label="Teilnehmer:innen" value={attendingCount.toString()} />
           <SummaryCard label="Personentage" value={totalPersonDays.toString()} />
           <SummaryCard label="Gesamtkosten" value={formatEur(totalCosts)} />
           <SummaryCard label="Echt. Tagessatz" value={formatEur(actualDailyRate)} />
@@ -161,6 +164,7 @@ export function AdminDashboard() {
             requests={legacyRequests}
             decisions={legacyDecisions}
             participants={participants}
+            config={config}
             onRefresh={fetchAll}
           />
         )}
@@ -177,7 +181,8 @@ function daysPresent(attendance: Attendance[], numDays: number): number {
 }
 
 function getDayLabel(config: FestivalConfig | null, dayIndex: number): string {
-  const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+  // Index = Date.getDay(), also 0 = Sonntag
+  const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
   if (config?.festival_start) {
     const d = new Date(config.festival_start)
     d.setDate(d.getDate() + dayIndex)
@@ -205,6 +210,7 @@ function ParticipantsTab({
 }) {
   const numDays = config?.num_days ?? 4
   const advanceRate = config?.daily_rate ?? 25
+  const registeredOnly = participants.filter(p => daysPresent(p.attendance, numDays) === 0).length
 
   const getLegacyDiscount = (userId: string) => {
     const decision = legacyDecisions.find(d => d.user_id === userId && d.decision === 'apply_www7')
@@ -260,6 +266,9 @@ function ParticipantsTab({
           Vorauszahlung: <span className="text-white">{formatEur(advanceRate)}/Tag</span>
           {' · '}
           Echter Tagessatz: <span className="text-green-400">{formatEur(actualDailyRate)}/Tag</span>
+          {registeredOnly > 0 && (
+            <>{' · '}<span className="text-gray-500">{registeredOnly}× nur registriert (0 Tage, zählt nicht mit)</span></>
+          )}
         </p>
         <button
           onClick={async () => {
@@ -291,8 +300,13 @@ function ParticipantsTab({
               const actual = days * actualDailyRate
               const refund = advance - actual
               return (
-                <tr key={p.id} className="tr-row">
-                  <td className="td font-medium">{fullName(p)}</td>
+                <tr key={p.id} className={`tr-row ${days === 0 ? 'opacity-60' : ''}`}>
+                  <td className="td font-medium">
+                    {fullName(p)}
+                    {days === 0 && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-500">nur registriert</span>
+                    )}
+                  </td>
                   <td className="td text-center text-gray-300">{days}</td>
                   <td className="td text-right">{formatEur(advance)}</td>
                   <td className="td text-right text-gray-400">{formatEur(actual)}</td>
@@ -710,18 +724,27 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
   )
 }
 
+function formatDateShort(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
 function formatEur(amount: number) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(amount)
 }
 
 // ─── Legacy Tab ───────────────────────────────────────────────────────────────
 
-const DECISION_LABELS: Record<string, string> = {
-  refund: 'Rückzahlung',
-  apply_www7: 'Verrechnung WWW7',
-  donate_www: 'Spende ans WWW',
-  donate_org1: 'Spende Org 1',
-  donate_org2: 'Spende Org 2',
+const DECISION_KEYS: LegacyDecisionType[] = ['refund', 'apply_www7', 'donate_www', 'donate_org1', 'donate_org2']
+
+// Gleiche Beschriftungen wie im Nutzer-Flow, inkl. der in der Config gepflegten Org-Namen.
+function decisionLabels(config: FestivalConfig | null): Record<LegacyDecisionType, string> {
+  return {
+    refund:      'Rückzahlung',
+    apply_www7:  'Verrechnung WWW7',
+    donate_www:  'Spende ans WWW',
+    donate_org1: config?.donation_org1_name ? `Spende: ${config.donation_org1_name}` : 'Spende Org 1',
+    donate_org2: config?.donation_org2_name ? `Spende: ${config.donation_org2_name}` : 'Spende Org 2',
+  }
 }
 
 function LegacyTab({
@@ -729,17 +752,52 @@ function LegacyTab({
   requests,
   decisions,
   participants,
+  config,
   onRefresh,
 }: {
   credits: LegacyCredit[]
   requests: LegacyCreditRequest[]
   decisions: LegacyCreditDecision[]
   participants: ParticipantWithPayment[]
+  config: FestivalConfig | null
   onRefresh: () => void
 }) {
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const [working, setWorking] = useState<string | null>(null)
+  const [savingCredit, setSavingCredit] = useState<string | null>(null)
+  const [decisionError, setDecisionError] = useState<string | null>(null)
+
+  const LABELS = decisionLabels(config)
+
+  // Entscheidung händisch setzen/zurücknehmen — für Leute aus WWW6, die sich nie
+  // anmelden. Läuft über dieselben Regeln wie der Nutzer-Flow (RPC upsert +
+  // Neuberechnung des unbezahlten Betrags), nur eben vom Admin ausgelöst.
+  const setDecision = async (credit: LegacyCredit, value: string) => {
+    setSavingCredit(credit.id)
+    setDecisionError(null)
+    const { data } = value
+      ? await supabase.rpc('admin_set_legacy_decision', { p_credit_id: credit.id, p_decision: value })
+      : await supabase.rpc('admin_clear_legacy_decision', { p_credit_id: credit.id })
+    const err = (data as { error?: string } | null)?.error
+    if (err) setDecisionError(err)
+    setSavingCredit(null)
+    await onRefresh()
+  }
+
+  // Erledigt-Haken: friert die Entscheidung ein (Rückzahlung überwiesen / Spende abgeführt).
+  // Die eigentliche Sperre sitzt als Trigger in der Datenbank, hier wird sie nur bedient.
+  const setSettled = async (credit: LegacyCredit, settled: boolean) => {
+    setSavingCredit(credit.id)
+    setDecisionError(null)
+    const { data } = await supabase.rpc('admin_set_legacy_settled', {
+      p_credit_id: credit.id, p_settled: settled,
+    })
+    const err = (data as { error?: string } | null)?.error
+    if (err) setDecisionError(err)
+    setSavingCredit(null)
+    await onRefresh()
+  }
 
   const profileName = (userId: string) => {
     const p = participants.find(p => p.id === userId)
@@ -779,9 +837,9 @@ function LegacyTab({
     onRefresh()
   }
 
-  const decisionSummary = Object.entries(DECISION_LABELS).map(([key, label]) => ({
+  const decisionSummary = DECISION_KEYS.map(key => ({
     key,
-    label,
+    label: LABELS[key],
     count: decisions.filter(d => d.decision === key).length,
     amount: decisions
       .filter(d => d.decision === key)
@@ -890,6 +948,18 @@ function LegacyTab({
       {/* All credits overview */}
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-gray-400">Alle Einträge (WWW6)</h3>
+        <p className="text-xs text-gray-500">
+          Die Entscheidung lässt sich hier händisch setzen — für Leute aus WWW6, die sich nicht anmelden.
+          Verrechnung mit WWW7 steht nur bei zugeordnetem Account zur Auswahl.
+          <br />
+          <span className="text-gray-600">
+            „Erledigt" haken, sobald ausgezahlt bzw. abgeführt ist: der Eintrag wird ausgegraut und
+            die Entscheidung ist gesperrt — hier wie im Portal — bis du den Haken wieder entfernst.
+          </span>
+        </p>
+        {decisionError && (
+          <p className="text-xs text-red-400">{decisionError}</p>
+        )}
         <div className="table-wrapper">
           <table className="w-full text-sm">
             <thead>
@@ -898,14 +968,17 @@ function LegacyTab({
                 <th className="th text-right">Betrag</th>
                 <th className="th">Zugeordnet an</th>
                 <th className="th">Entscheidung</th>
+                <th className="th text-center">Erledigt</th>
               </tr>
             </thead>
             <tbody>
               {credits.map(credit => {
                 const decision = decisions.find(d => d.legacy_credit_id === credit.id)
                 const req = requests.find(r => r.legacy_credit_id === credit.id && r.status === 'pending')
+                const settled = !!decision?.settled_at
+                const busy = savingCredit === credit.id
                 return (
-                  <tr key={credit.id} className="tr-row">
+                  <tr key={credit.id} className={`tr-row ${settled ? 'opacity-50' : ''}`}>
                     <td className="td font-medium">{credit.display_name}</td>
                     <td className="td text-right">{formatEur(credit.amount_owed)}</td>
                     <td className="td text-gray-300 text-xs">
@@ -917,12 +990,45 @@ function LegacyTab({
                       }
                     </td>
                     <td className="td text-xs">
-                      {decision
-                        ? <span className="text-green-400">{DECISION_LABELS[decision.decision]}</span>
-                        : credit.match_confirmed
-                          ? <span className="text-yellow-500">Ausstehend</span>
-                          : <span className="text-gray-600">—</span>
-                      }
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={decision?.decision ?? ''}
+                          disabled={busy || settled}
+                          onChange={e => setDecision(credit, e.target.value)}
+                          title={settled ? 'Erledigt — zum Ändern erst den Haken entfernen' : undefined}
+                          className={`input-sm text-xs py-1 disabled:opacity-40 disabled:cursor-not-allowed ${
+                            decision ? 'text-green-400' : credit.match_confirmed ? 'text-yellow-500' : 'text-gray-500'
+                          }`}
+                        >
+                          <option value="">{credit.match_confirmed ? 'Ausstehend' : 'Keine'}</option>
+                          {DECISION_KEYS
+                            // Verrechnung geht nur mit zugeordnetem Account — sonst gibt es
+                            // keinen WWW7-Betrag, von dem abgezogen werden könnte.
+                            .filter(key => key !== 'apply_www7' || (credit.matched_user_id && credit.match_confirmed))
+                            .map(key => (
+                              <option key={key} value={key}>{LABELS[key]}</option>
+                            ))}
+                        </select>
+                        {decision?.set_by_admin_id && (
+                          <span className="text-[10px] uppercase tracking-wide text-gray-500" title="Von einem Admin händisch eingetragen">
+                            händisch
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="td text-center">
+                      <label className={`inline-flex items-center gap-1.5 ${decision ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
+                        <input
+                          type="checkbox"
+                          checked={settled}
+                          disabled={busy || !decision}
+                          onChange={e => setSettled(credit, e.target.checked)}
+                          className="w-4 h-4 accent-green-600 disabled:cursor-not-allowed"
+                        />
+                        <span className="text-[10px] text-gray-500">
+                          {settled && decision?.settled_at ? formatDateShort(decision.settled_at) : ''}
+                        </span>
+                      </label>
                     </td>
                   </tr>
                 )

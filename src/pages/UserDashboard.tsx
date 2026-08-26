@@ -106,14 +106,17 @@ export function UserDashboard() {
         const { data: decision } = await supabase
           .from('legacy_credit_decisions').select('*').eq('user_id', user.id).maybeSingle()
         setLegacyDecision(decision)
-        // Anwesenheit wiederherstellen: bei vorhandener Entscheidung aus der Wahl
-        // ableiten (apply_www7 ⇒ dabei, refund ⇒ nicht dabei), sonst aus localStorage.
-        // Sonst bliebe legacyAttending nach Re-Login null und die Folge-Sektionen
-        // (Anwesenheit/Kosten/Überweisung) würden trotz getroffener Wahl verschwinden.
+        // Anwesenheit wiederherstellen: aus einer SELBST getroffenen Wahl lässt sie sich
+        // ableiten (refund wird nur für "nicht dabei" angeboten, apply_www7 nur für "dabei"),
+        // sonst aus localStorage. Sonst bliebe legacyAttending nach Re-Login null und die
+        // Folge-Sektionen (Anwesenheit/Kosten/Überweisung) würden verschwinden.
+        // Bei einer vom Admin gepflegten Entscheidung wurde die Frage dagegen nie gestellt —
+        // hier darf nicht geraten werden, die Frage wird in der 'decided'-Ansicht nachgeholt.
         const stored = localStorage.getItem(`wwwLegacyAttending_${user.id}`)
+        const selfDecided = decision && !decision.set_by_admin_id ? decision.decision : null
         const attending =
-          decision?.decision === 'apply_www7' ? true
-          : decision?.decision === 'refund' ? false
+          selfDecided === 'apply_www7' ? true
+          : selfDecided === 'refund' ? false
           : stored !== null ? stored === 'true'
           : null
         if (attending !== null) setLegacyAttending(attending)
@@ -335,10 +338,21 @@ export function UserDashboard() {
                 // RPC statt direktem Upsert: schreibt die Entscheidung UND rechnet einen
                 // bereits festgeschriebenen (unbezahlten) Betrag neu, damit ein Wechsel
                 // verrechnen ⇄ spenden sofort im festgelegten Betrag greift.
-                await supabase.rpc('set_legacy_decision', { p_decision: decision })
+                const { data: res } = await supabase.rpc('set_legacy_decision', { p_decision: decision })
+                // Abgeschlossene Guthaben sind gesperrt — dann nicht so tun, als hätte es geklappt,
+                // sondern den echten Stand nachladen (der Button dazu ist dann auch weg).
+                if ((res as { error?: string } | null)?.error) {
+                  const { data: fresh } = await supabase
+                    .from('legacy_credit_decisions').select('*').eq('user_id', user!.id).maybeSingle()
+                  setLegacyDecision(fresh)
+                  if (fresh) setLegacyPhase('decided')
+                  return
+                }
                 setLegacyDecision({
                   id: '', legacy_credit_id: legacyCredit.id,
-                  user_id: user!.id, decision, decided_at: new Date().toISOString(),
+                  user_id: user!.id, set_by_admin_id: null,
+                  decision, decided_at: new Date().toISOString(),
+                  settled_at: null, settled_by: null,
                 })
                 // Festgeschriebenen Betrag neu laden, falls der Admin ihn schon gesetzt hat
                 const { data: pay } = await supabase
@@ -353,6 +367,7 @@ export function UserDashboard() {
                 setLegacyPhase('matched')
               }}
               onNext={() => scrollTo('sec-anwesenheit')}
+              showNext={showPostLegacySections}
             />
           </section>
         )}
@@ -810,6 +825,7 @@ function LegacySurveySection({
   onDecide,
   onChangeDecision,
   onNext,
+  showNext,
 }: {
   phase: LegacyPhase
   credit: LegacyCredit | null
@@ -825,6 +841,7 @@ function LegacySurveySection({
   onDecide: (decision: LegacyDecisionType) => Promise<void>
   onChangeDecision: () => void
   onNext: () => void
+  showNext: boolean
 }) {
   const [selectedCredit, setSelectedCredit] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -884,22 +901,61 @@ function LegacySurveySection({
         <div className="space-y-4">
           <div className="card">
             <div className="card-body space-y-3">
-              <div className="badge-paid">Deine Entscheidung ist gespeichert.</div>
+              <div className="badge-paid">
+                {decision.settled_at ? 'Erledigt — abgeschlossen.' : 'Deine Entscheidung ist gespeichert.'}
+              </div>
               <p className="text-sm text-gray-300">
                 Guthaben: <span className="text-white font-semibold">{credit ? formatEur(credit.amount_owed) : '—'}</span>
                 {' · '}Wahl: <span className="text-green-400 font-semibold">{DECISION_LABELS[decision.decision]}</span>
               </p>
-              <button
-                onClick={onChangeDecision}
-                className="text-xs text-gray-500 hover:text-yellow-300 transition-colors"
-              >
-                Entscheidung ändern
-              </button>
+              {/* Abgeschlossen = ausgezahlt bzw. abgeführt. Die Wahl ist dann eingefroren;
+                  die eigentliche Sperre sitzt als Trigger in der Datenbank. */}
+              {decision.settled_at ? (
+                <p className="text-xs text-gray-500">
+                  {decision.decision === 'refund'
+                    ? `Am ${formatDate(decision.settled_at)} an dich ausgezahlt.`
+                    : `Am ${formatDate(decision.settled_at)} abgeschlossen.`}
+                  {' '}Damit ist die Sache erledigt und die Wahl lässt sich nicht mehr ändern.
+                  Stimmt etwas nicht, meld dich bei uns.
+                </p>
+              ) : (
+                <button
+                  onClick={onChangeDecision}
+                  className="text-xs text-gray-500 hover:text-yellow-300 transition-colors"
+                >
+                  Entscheidung ändern
+                </button>
+              )}
             </div>
           </div>
-          <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
-            Zur Anwesenheit ↓
-          </button>
+
+          {/* Hat der Admin die Entscheidung gepflegt, wurde nie gefragt, ob die Person beim
+              WWW7 dabei ist. Ohne diese Antwort blieben Anwesenheit, Kosten und Überweisung
+              ausgeblendet — also hier nachholen. */}
+          {attending === null && (
+            <div className="card">
+              <div className="card-body space-y-3">
+                <p className="text-sm text-gray-200 font-medium">Bist du beim WWW7 dabei?</p>
+                <p className="text-xs text-gray-500">
+                  Deine Altguthaben-Wahl steht schon fest — für Anwesenheit und Kosten brauchen wir das trotzdem.
+                </p>
+                <div className="flex gap-3">
+                  <button onClick={() => onSetAttending(true)} className="btn-primary text-sm">
+                    Ja, ich komme
+                  </button>
+                  <button onClick={() => onSetAttending(false)} className="btn-ghost text-sm">
+                    Nein, dieses Jahr nicht
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showNext && (
+            <button onClick={onNext} className="text-sm text-gray-400 hover:text-green-400 transition-colors">
+              Zur Anwesenheit ↓
+            </button>
+          )}
         </div>
       )}
 

@@ -94,9 +94,14 @@ create unique index one_pending_request_per_user
 create table public.legacy_credit_decisions (
   id uuid primary key default gen_random_uuid(),
   legacy_credit_id uuid not null references public.legacy_credits(id) on delete cascade,
-  user_id uuid not null references public.profiles(id) on delete cascade,
+  -- nullable: Admins pflegen auch Entscheidungen für WWW6-Leute ohne Account
+  user_id uuid references public.profiles(id) on delete cascade,
+  set_by_admin_id uuid references public.profiles(id) on delete set null,
   decision text not null check (decision in ('refund', 'apply_www7', 'donate_www', 'donate_org1', 'donate_org2')),
   decided_at timestamptz not null default now(),
+  -- Erledigt-Sperre: gesetzt = ausgezahlt/abgeführt, Entscheidung ist eingefroren
+  settled_at timestamptz,
+  settled_by uuid references public.profiles(id) on delete set null,
   unique(legacy_credit_id)
 );
 
@@ -158,6 +163,8 @@ begin
   -- Schon zugeordnet?
   select * into v_credit from legacy_credits where matched_user_id = v_uid limit 1;
   if found then
+    update legacy_credit_decisions set user_id = v_uid
+      where legacy_credit_id = v_credit.id and user_id is null;
     return json_build_object(
       'status','already_matched',
       'credit_id', v_credit.id,
@@ -188,6 +195,10 @@ begin
     update legacy_credits
       set matched_user_id = v_uid, match_confirmed = true
       where id = v_credit.id;
+    -- Hat der Admin die Entscheidung schon händisch gepflegt, zieht sie mit um.
+    -- Sonst fände das Portal sie wegen RLS (user_id = auth.uid()) nicht.
+    update legacy_credit_decisions set user_id = v_uid
+      where legacy_credit_id = v_credit.id and user_id is null;
     return json_build_object(
       'status','matched',
       'credit_id', v_credit.id,
@@ -234,6 +245,9 @@ begin
   update legacy_credits
     set matched_user_id = v_req.requesting_user_id, match_confirmed = true
     where id = v_req.legacy_credit_id and matched_user_id is null;
+  -- Bereits händisch gepflegte Entscheidung dem Account zuschreiben (siehe try_automatch)
+  update legacy_credit_decisions set user_id = v_req.requesting_user_id
+    where legacy_credit_id = v_req.legacy_credit_id and user_id is null;
   update legacy_credit_requests set status = 'approved' where id = p_request_id;
   -- Konkurrierende Anfragen für dasselbe Guthaben ablehnen
   update legacy_credit_requests
@@ -316,6 +330,11 @@ begin
     return json_build_object('error','Kein zugeordnetes Guthaben');
   end if;
 
+  if exists (select 1 from legacy_credit_decisions
+             where legacy_credit_id = v_credit.id and settled_at is not null) then
+    return json_build_object('error','Dein Altguthaben ist bereits abgeschlossen und kann nicht mehr geändert werden.');
+  end if;
+
   insert into legacy_credit_decisions (legacy_credit_id, user_id, decision, decided_at)
     values (v_credit.id, v_uid, p_decision, now())
     on conflict (legacy_credit_id)
@@ -343,6 +362,176 @@ begin
   return json_build_object('status','ok','amount_due', v_due);
 end;
 $$;
+
+-- Admin setzt die Altguthaben-Entscheidung für einen beliebigen Eintrag händisch.
+-- Verhält sich wie set_legacy_decision auf Nutzerseite (upsert auf legacy_credit_id
+-- plus Neuberechnung des unbezahlten Betrags), funktioniert aber auch für WWW6-Leute
+-- ohne Account. apply_www7 setzt einen zugeordneten Account voraus.
+create or replace function public.admin_set_legacy_decision(p_credit_id uuid, p_decision text)
+returns json language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_uid    uuid := auth.uid();
+  v_credit legacy_credits%rowtype;
+  v_due    numeric(10,2);
+begin
+  if not public.is_admin() then
+    return json_build_object('error','Keine Berechtigung');
+  end if;
+
+  if p_decision not in ('refund','apply_www7','donate_www','donate_org1','donate_org2') then
+    return json_build_object('error','Ungültige Entscheidung');
+  end if;
+
+  select * into v_credit from legacy_credits where id = p_credit_id;
+  if not found then
+    return json_build_object('error','Guthaben nicht gefunden');
+  end if;
+
+  if exists (select 1 from legacy_credit_decisions
+             where legacy_credit_id = p_credit_id and settled_at is not null) then
+    return json_build_object('error','Als erledigt markiert — erst die Sperre lösen');
+  end if;
+
+  if p_decision = 'apply_www7' and v_credit.matched_user_id is null then
+    return json_build_object('error','Verrechnung braucht einen zugeordneten Account');
+  end if;
+
+  insert into legacy_credit_decisions (legacy_credit_id, user_id, decision, decided_at, set_by_admin_id)
+    values (v_credit.id, v_credit.matched_user_id, p_decision, now(), v_uid)
+    on conflict (legacy_credit_id)
+    do update set decision        = excluded.decision,
+                  decided_at      = excluded.decided_at,
+                  user_id         = excluded.user_id,
+                  set_by_admin_id = excluded.set_by_admin_id;
+
+  if v_credit.matched_user_id is not null then
+    v_due := public._recompute_payment_due(v_credit.matched_user_id);
+  end if;
+
+  return json_build_object('status','ok','amount_due', v_due);
+end;
+$$;
+
+-- Admin nimmt eine Entscheidung zurück (Fehleingabe / Person meldet sich doch an).
+create or replace function public.admin_clear_legacy_decision(p_credit_id uuid)
+returns json language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_credit legacy_credits%rowtype;
+  v_due    numeric(10,2);
+begin
+  if not public.is_admin() then
+    return json_build_object('error','Keine Berechtigung');
+  end if;
+
+  select * into v_credit from legacy_credits where id = p_credit_id;
+  if not found then
+    return json_build_object('error','Guthaben nicht gefunden');
+  end if;
+
+  if exists (select 1 from legacy_credit_decisions
+             where legacy_credit_id = p_credit_id and settled_at is not null) then
+    return json_build_object('error','Als erledigt markiert — erst die Sperre lösen');
+  end if;
+
+  delete from legacy_credit_decisions where legacy_credit_id = p_credit_id;
+
+  if v_credit.matched_user_id is not null then
+    v_due := public._recompute_payment_due(v_credit.matched_user_id);
+  end if;
+
+  return json_build_object('status','ok','amount_due', v_due);
+end;
+$$;
+
+-- Admin setzt/entfernt die Erledigt-Markierung (Rückzahlung überwiesen, Spende abgeführt).
+-- Idempotent: erneutes Setzen auf denselben Zustand ist ein No-Op statt ein Trigger-Fehler.
+create or replace function public.admin_set_legacy_settled(p_credit_id uuid, p_settled boolean)
+returns json language plpgsql security definer set search_path to 'public' as $$
+declare
+  v_uid        uuid := auth.uid();
+  v_settled_at timestamptz;
+  v_found      boolean;
+begin
+  if not public.is_admin() then
+    return json_build_object('error','Keine Berechtigung');
+  end if;
+
+  select settled_at, true into v_settled_at, v_found
+    from legacy_credit_decisions where legacy_credit_id = p_credit_id;
+
+  if not coalesce(v_found, false) then
+    return json_build_object('error','Ohne Entscheidung gibt es nichts abzuschließen');
+  end if;
+
+  if (v_settled_at is not null) = p_settled then
+    return json_build_object('status','ok','settled', p_settled);
+  end if;
+
+  update legacy_credit_decisions
+    set settled_at = case when p_settled then now() else null end,
+        settled_by = case when p_settled then v_uid else null end
+    where legacy_credit_id = p_credit_id;
+
+  return json_build_object('status','ok','settled', p_settled);
+end;
+$$;
+
+-- Die Erledigt-Sperre wird per Trigger durchgesetzt, nicht nur in den RPCs: authenticated
+-- hat direkte Schreibrechte auf die Tabelle, ein deaktiviertes Dropdown wäre keine Sperre.
+create or replace function public.guard_settled_legacy_decision()
+returns trigger language plpgsql security definer set search_path to 'public' as $$
+begin
+  if TG_OP = 'INSERT' then
+    -- Erledigt-Markierung darf nur ein Admin direkt mitschreiben
+    if NEW.settled_at is not null and not public.is_admin() then
+      raise exception 'Nur Admins können ein Altguthaben als erledigt markieren.'
+        using errcode = 'check_violation';
+    end if;
+    return NEW;
+  end if;
+
+  -- Nicht gesperrt: alles wie gehabt
+  if OLD.settled_at is null then
+    return case when TG_OP = 'DELETE' then OLD else NEW end;
+  end if;
+
+  if TG_OP = 'DELETE' then
+    raise exception 'Altguthaben ist als erledigt markiert und gesperrt.'
+      using errcode = 'check_violation';
+  end if;
+
+  -- Nachträgliche Zuordnung eines Accounts ist reine Zuschreibung und bleibt erlaubt:
+  -- meldet sich jemand nach der Auszahlung doch noch an, soll die Entscheidung ihm
+  -- zugeordnet werden. RLS lässt das nur über die SECURITY-DEFINER-Pfade zu.
+  if OLD.user_id is null and NEW.user_id is not null
+     and NEW.settled_at       is not distinct from OLD.settled_at
+     and NEW.decision         is not distinct from OLD.decision
+     and NEW.legacy_credit_id is not distinct from OLD.legacy_credit_id then
+    return NEW;
+  end if;
+
+  -- Sonst ist die einzige erlaubte Änderung: ein Admin hebt die Sperre wieder auf.
+  if not public.is_admin() then
+    raise exception 'Altguthaben ist als erledigt markiert und gesperrt.'
+      using errcode = 'check_violation';
+  end if;
+
+  if NEW.settled_at is not null
+     or NEW.decision         is distinct from OLD.decision
+     or NEW.legacy_credit_id is distinct from OLD.legacy_credit_id
+     or NEW.user_id          is distinct from OLD.user_id then
+    raise exception 'Erledigtes Altguthaben ist gesperrt — erst die Erledigt-Markierung entfernen.'
+      using errcode = 'check_violation';
+  end if;
+
+  return NEW;
+end;
+$$;
+
+drop trigger if exists guard_settled_legacy_decision on public.legacy_credit_decisions;
+create trigger guard_settled_legacy_decision
+  before insert or update or delete on public.legacy_credit_decisions
+  for each row execute function public.guard_settled_legacy_decision();
 
 -- Mail-Helfer für die notify-Edge-Function (umgeht die Service-Role).
 -- Liefert die Mail-Adressen aller Admins (für "neue Anfrage"-Benachrichtigung).
@@ -395,6 +584,9 @@ grant execute on function public.approve_legacy_credit_request(uuid)     to auth
 grant execute on function public.reject_legacy_credit_request(uuid,text) to authenticated;
 grant execute on function public.set_legacy_decision(text)               to authenticated;
 grant execute on function public.recompute_my_payment()                  to authenticated;
+grant execute on function public.admin_set_legacy_decision(uuid,text)   to authenticated;
+grant execute on function public.admin_clear_legacy_decision(uuid)      to authenticated;
+grant execute on function public.admin_set_legacy_settled(uuid,boolean)  to authenticated;
 grant execute on function public.notify_admin_emails()                   to authenticated;
 grant execute on function public.notify_get_recipient(uuid)              to authenticated;
 
