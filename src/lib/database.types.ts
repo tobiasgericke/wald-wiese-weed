@@ -124,6 +124,8 @@ export interface Database {
           amount: number
           description: string | null
           created_at: string
+          category_id: string | null
+          paid_by: string | null
         }
         Insert: {
           id?: string
@@ -131,11 +133,33 @@ export interface Database {
           amount: number
           description?: string | null
           created_at?: string
+          category_id?: string | null
+          paid_by?: string | null
         }
         Update: {
           name?: string
           amount?: number
           description?: string | null
+          category_id?: string | null
+          paid_by?: string | null
+        }
+      }
+      cost_categories: {
+        Row: {
+          id: string
+          name: string
+          sort_order: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          sort_order?: number
+          created_at?: string
+        }
+        Update: {
+          name?: string
+          sort_order?: number
         }
       }
       legacy_credits: {
@@ -243,6 +267,7 @@ export interface Database {
 export type Profile = Database['public']['Tables']['profiles']['Row']
 export type FestivalConfig = Database['public']['Tables']['festival_config']['Row']
 export type CostItem = Database['public']['Tables']['cost_items']['Row']
+export type CostCategory = Database['public']['Tables']['cost_categories']['Row']
 export type ParticipantPayment = Database['public']['Tables']['participant_payments']['Row']
 export type Attendance = Database['public']['Tables']['attendance']['Row']
 export type LegacyCredit = Database['public']['Tables']['legacy_credits']['Row']

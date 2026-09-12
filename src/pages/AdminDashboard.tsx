@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Navbar } from '../components/Navbar'
-import type { Profile, FestivalConfig, CostItem, ParticipantPayment, Attendance, LegacyCredit, LegacyCreditRequest, LegacyCreditDecision, LegacyDecisionType } from '../lib/database.types'
+import type { Profile, FestivalConfig, CostItem, CostCategory, ParticipantPayment, Attendance, LegacyCredit, LegacyCreditRequest, LegacyCreditDecision, LegacyDecisionType } from '../lib/database.types'
 
 function fullName(profile: Profile): string {
   const fn = profile.first_name?.trim()
@@ -22,6 +22,7 @@ export function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('participants')
   const [participants, setParticipants] = useState<ParticipantWithPayment[]>([])
   const [costItems, setCostItems] = useState<CostItem[]>([])
+  const [costCategories, setCostCategories] = useState<CostCategory[]>([])
   const [config, setConfig] = useState<FestivalConfig | null>(null)
   const [legacyCredits, setLegacyCredits] = useState<LegacyCredit[]>([])
   const [legacyRequests, setLegacyRequests] = useState<LegacyCreditRequest[]>([])
@@ -30,11 +31,12 @@ export function AdminDashboard() {
 
   const fetchAll = async () => {
     const [
-      { data: profiles }, { data: costs }, { data: cfg }, { data: payments }, { data: att },
+      { data: profiles }, { data: costs }, { data: categories }, { data: cfg }, { data: payments }, { data: att },
       { data: credits }, { data: requests }, { data: decisions },
     ] = await Promise.all([
       supabase.from('profiles').select('*').order('name'),
       supabase.from('cost_items').select('*').order('created_at'),
+      supabase.from('cost_categories').select('*').order('sort_order').order('name'),
       supabase.from('festival_config').select('*').eq('id', 1).maybeSingle(),
       supabase.from('participant_payments').select('*'),
       supabase.from('attendance').select('*'),
@@ -51,6 +53,7 @@ export function AdminDashboard() {
 
     setParticipants(merged)
     setCostItems(costs ?? [])
+    setCostCategories(categories ?? [])
     setConfig(cfg)
     setLegacyCredits(credits ?? [])
     setLegacyRequests(requests ?? [])
@@ -153,7 +156,14 @@ export function AdminDashboard() {
           />
         )}
         {tab === 'costs' && (
-          <CostsTab costItems={costItems} totalCosts={totalCosts} onRefresh={fetchAll} />
+          <CostsTab
+            costItems={costItems}
+            categories={costCategories}
+            participants={participants}
+            totalCosts={totalCosts}
+            totalPaid={totalPaid}
+            onRefresh={fetchAll}
+          />
         )}
         {tab === 'config' && (
           <ConfigTab config={config} onRefresh={fetchAll} />
@@ -434,28 +444,56 @@ function AttendanceTab({
 
 // ─── Costs Tab ───────────────────────────────────────────────────────────────
 
+// Einheitliche Balkenfarbe: die Kategorie steht als Text am Balken, Farbe trägt
+// also keine Identität — damit entfällt jedes Durchrotieren von Kategoriefarben.
+const BAR_COLOR = '#4ade80'        // green-400
+const BAR_REST_COLOR = '#2a4f2a'   // forest-500 — unverbrauchter Rest
+const OVER_COLOR = '#f87171'       // red-400 — Budget überzogen
+
 function CostsTab({
   costItems,
+  categories,
+  participants,
   totalCosts,
+  totalPaid,
   onRefresh,
 }: {
   costItems: CostItem[]
+  categories: CostCategory[]
+  participants: ParticipantWithPayment[]
   totalCosts: number
+  totalPaid: number
   onRefresh: () => void
 }) {
   const [name, setName] = useState('')
   const [amount, setAmount] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [paidBy, setPaidBy] = useState('')
   const [description, setDescription] = useState('')
   const [adding, setAdding] = useState(false)
+
+  const categoryName = (id: string | null) =>
+    categories.find(c => c.id === id)?.name ?? '— ohne Kategorie —'
 
   const addItem = async (e: React.FormEvent) => {
     e.preventDefault()
     setAdding(true)
     await supabase.from('cost_items').insert({
-      name, amount: parseFloat(amount), description: description || null,
+      name,
+      amount: parseFloat(amount),
+      description: description || null,
+      category_id: categoryId || null,
+      paid_by: paidBy || null,
     })
     setName(''); setAmount(''); setDescription('')
+    // Kategorie und Zahler:in bleiben stehen — beim Erfassen einer Rechnung
+    // kommen meist mehrere Positionen derselben Person/Kategorie hintereinander.
     setAdding(false)
+    onRefresh()
+  }
+
+  const updateItem = async (id: string, patch: { category_id?: string | null; paid_by?: string | null }) => {
+    await supabase.from('cost_items').update(patch).eq('id', id)
     onRefresh()
   }
 
@@ -468,20 +506,35 @@ function CostsTab({
     <div className="space-y-4">
       <form onSubmit={addItem} className="card">
         <div className="card-body">
-          <div className="flex flex-col md:flex-row gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <input
-              placeholder="Kostenposition"
+              placeholder="Bezeichnung (z. B. Sojaschnetzel)"
               value={name}
               onChange={e => setName(e.target.value)}
               required
-              className="input-sm flex-1"
+              className="input-sm md:col-span-4"
             />
-            <input
-              placeholder="Beschreibung (optional)"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              className="input-sm flex-1"
-            />
+            <select
+              value={categoryId}
+              onChange={e => setCategoryId(e.target.value)}
+              required
+              className="input-sm md:col-span-2"
+            >
+              <option value="">Kategorie …</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <select
+              value={paidBy}
+              onChange={e => setPaidBy(e.target.value)}
+              className="input-sm md:col-span-3"
+            >
+              <option value="">Bezahlt von …</option>
+              {participants.map(p => (
+                <option key={p.id} value={p.id}>{fullName(p)}</option>
+              ))}
+            </select>
             <input
               type="number"
               placeholder="Betrag €"
@@ -490,12 +543,29 @@ function CostsTab({
               required
               min="0"
               step="0.01"
-              className="input-sm w-32"
+              className="input-sm md:col-span-2"
             />
-            <button type="submit" disabled={adding} className="btn-primary whitespace-nowrap px-4 py-2 text-sm">
-              + Hinzufügen
+            <button
+              type="submit"
+              disabled={adding}
+              title="Position hinzufügen"
+              aria-label="Position hinzufügen"
+              className="btn-primary whitespace-nowrap px-4 py-2 text-sm md:col-span-1"
+            >
+              +
             </button>
+            <input
+              placeholder="Notiz (optional)"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              className="input-sm md:col-span-12"
+            />
           </div>
+          {categories.length === 0 && (
+            <p className="text-xs text-yellow-400">
+              Noch keine Kategorien angelegt — weiter unten unter „Kategorien" anlegen.
+            </p>
+          )}
         </div>
       </form>
 
@@ -503,11 +573,12 @@ function CostsTab({
         {costItems.length === 0 ? (
           <p className="text-center text-gray-500 py-10 text-sm">Noch keine Kostenpositionen</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[720px]">
             <thead>
               <tr className="border-b border-forest-700 text-left">
                 <th className="th">Position</th>
-                <th className="th hidden md:table-cell">Beschreibung</th>
+                <th className="th">Kategorie</th>
+                <th className="th">Bezahlt von</th>
                 <th className="th text-right">Betrag</th>
                 <th className="th" />
               </tr>
@@ -515,9 +586,37 @@ function CostsTab({
             <tbody>
               {costItems.map(item => (
                 <tr key={item.id} className="tr-row">
-                  <td className="td font-medium">{item.name}</td>
-                  <td className="td text-gray-400 hidden md:table-cell">{item.description ?? '—'}</td>
-                  <td className="td text-right">{formatEur(item.amount)}</td>
+                  <td className="td font-medium">
+                    {item.name}
+                    {item.description && (
+                      <span className="block text-xs text-gray-500">{item.description}</span>
+                    )}
+                  </td>
+                  <td className="td">
+                    <select
+                      value={item.category_id ?? ''}
+                      onChange={e => updateItem(item.id, { category_id: e.target.value || null })}
+                      className="input-sm py-1"
+                    >
+                      <option value="">— ohne —</option>
+                      {categories.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="td">
+                    <select
+                      value={item.paid_by ?? ''}
+                      onChange={e => updateItem(item.id, { paid_by: e.target.value || null })}
+                      className="input-sm py-1"
+                    >
+                      <option value="">— offen —</option>
+                      {participants.map(p => (
+                        <option key={p.id} value={p.id}>{fullName(p)}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="td text-right whitespace-nowrap">{formatEur(item.amount)}</td>
                   <td className="td text-right">
                     <button
                       onClick={() => deleteItem(item.id)}
@@ -531,7 +630,7 @@ function CostsTab({
             </tbody>
             <tfoot>
               <tr className="bg-forest-800/60">
-                <td colSpan={2} className="td font-semibold text-green-400">Gesamt</td>
+                <td colSpan={3} className="td font-semibold text-green-400">Gesamt</td>
                 <td className="td text-right font-bold text-white">{formatEur(totalCosts)}</td>
                 <td />
               </tr>
@@ -539,9 +638,346 @@ function CostsTab({
           </table>
         )}
       </div>
+
+      <BudgetOverview
+        costItems={costItems}
+        categories={categories}
+        totalCosts={totalCosts}
+        totalPaid={totalPaid}
+      />
+
+      <ReimbursementOverview
+        costItems={costItems}
+        participants={participants}
+        categoryName={categoryName}
+      />
+
+      <CategoryManager categories={categories} costItems={costItems} onRefresh={onRefresh} />
     </div>
   )
 }
+
+// ─── Budget-Übersicht + Diagramm ─────────────────────────────────────────────
+
+function BudgetOverview({
+  costItems,
+  categories,
+  totalCosts,
+  totalPaid,
+}: {
+  costItems: CostItem[]
+  categories: CostCategory[]
+  totalCosts: number
+  totalPaid: number
+}) {
+  const remaining = totalPaid - totalCosts
+  const spentShare = totalPaid > 0 ? Math.min(totalCosts / totalPaid, 1) : (totalCosts > 0 ? 1 : 0)
+
+  // Anteil je Kategorie, absteigend. Positionen ohne Kategorie laufen unter
+  // „ohne Kategorie" mit, damit die Summe der Balken den Gesamtkosten entspricht.
+  const byCategory = [
+    ...categories.map(c => ({
+      id: c.id,
+      label: c.name,
+      total: costItems.filter(i => i.category_id === c.id).reduce((s, i) => s + i.amount, 0),
+    })),
+    {
+      id: '__none__',
+      label: 'ohne Kategorie',
+      total: costItems.filter(i => !i.category_id).reduce((s, i) => s + i.amount, 0),
+    },
+  ]
+    .filter(c => c.total > 0)
+    .sort((a, b) => b.total - a.total)
+
+  const maxTotal = byCategory.reduce((m, c) => Math.max(m, c.total), 0)
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Budget-Übersicht</h3>
+      </div>
+      <div className="card-body">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="stat-card">
+            <p className="stat-label">Eingegangene Zahlungen</p>
+            <p className="stat-value">{formatEur(totalPaid)}</p>
+          </div>
+          <div className="stat-card">
+            <p className="stat-label">Ausgaben</p>
+            <p className="stat-value">{formatEur(totalCosts)}</p>
+          </div>
+          <div className="stat-card col-span-2 md:col-span-1">
+            <p className="stat-label">{remaining >= 0 ? 'Übrig' : 'Fehlbetrag'}</p>
+            <p className={`stat-value ${remaining >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {formatEur(Math.abs(remaining))}
+            </p>
+          </div>
+        </div>
+
+        {/* Auslastung: ausgegeben vs. übrig */}
+        <div className="space-y-2">
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>Ausgegeben {Math.round(spentShare * 100)} %</span>
+            <span>{remaining >= 0 ? `Übrig ${formatEur(remaining)}` : `Überzogen um ${formatEur(-remaining)}`}</span>
+          </div>
+          <div
+            className="h-4 w-full rounded-md overflow-hidden"
+            style={{ backgroundColor: BAR_REST_COLOR }}
+            role="img"
+            aria-label={`Ausgegeben ${Math.round(spentShare * 100)} Prozent der eingegangenen Zahlungen`}
+          >
+            <div
+              className="h-full rounded-md"
+              style={{
+                width: `${Math.max(spentShare * 100, spentShare > 0 ? 1 : 0)}%`,
+                backgroundColor: remaining >= 0 ? BAR_COLOR : OVER_COLOR,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Ausgaben je Kategorie */}
+        <div className="space-y-3 pt-2">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Ausgaben je Kategorie</p>
+          {byCategory.length === 0 ? (
+            <p className="text-sm text-gray-500">Noch keine Ausgaben erfasst</p>
+          ) : (
+            byCategory.map(c => {
+              const shareOfCosts = totalCosts > 0 ? c.total / totalCosts : 0
+              return (
+                <div key={c.id} className="space-y-1">
+                  <div className="flex justify-between items-baseline gap-3 text-sm">
+                    <span className="text-gray-200 truncate">{c.label}</span>
+                    <span className="text-gray-400 whitespace-nowrap tabular-nums">
+                      {formatEur(c.total)}
+                      <span className="text-gray-600"> · {Math.round(shareOfCosts * 100)} %</span>
+                    </span>
+                  </div>
+                  <div
+                    className="h-2.5 w-full rounded overflow-hidden bg-forest-700"
+                    role="img"
+                    aria-label={`${c.label}: ${formatEur(c.total)}, ${Math.round(shareOfCosts * 100)} Prozent der Ausgaben`}
+                  >
+                    <div
+                      className="h-full rounded"
+                      style={{
+                        width: `${Math.max((maxTotal > 0 ? c.total / maxTotal : 0) * 100, 1)}%`,
+                        backgroundColor: BAR_COLOR,
+                      }}
+                    />
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Wer hat wie viel ausgelegt ──────────────────────────────────────────────
+
+function ReimbursementOverview({
+  costItems,
+  participants,
+  categoryName,
+}: {
+  costItems: CostItem[]
+  participants: ParticipantWithPayment[]
+  categoryName: (id: string | null) => string
+}) {
+  const [openId, setOpenId] = useState<string | null>(null)
+
+  const payers = participants
+    .map(p => ({
+      id: p.id,
+      name: fullName(p),
+      items: costItems.filter(i => i.paid_by === p.id),
+    }))
+    .filter(p => p.items.length > 0)
+    .map(p => ({ ...p, total: p.items.reduce((s, i) => s + i.amount, 0) }))
+    .sort((a, b) => b.total - a.total)
+
+  const unassigned = costItems.filter(i => !i.paid_by)
+  const unassignedTotal = unassigned.reduce((s, i) => s + i.amount, 0)
+  const payersTotal = payers.reduce((s, p) => s + p.total, 0)
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Auslagen — wem schulde ich was</h3>
+      </div>
+      <div className="card-body">
+        {payers.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            Noch niemandem eine Position zugeordnet. Oben in der Tabelle unter „Bezahlt von" auswählen.
+          </p>
+        ) : (
+          <div className="table-wrapper">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-forest-700 text-left">
+                  <th className="th">Bezahlt von</th>
+                  <th className="th text-right">Positionen</th>
+                  <th className="th text-right">Auslage</th>
+                  <th className="th" />
+                </tr>
+              </thead>
+              <tbody>
+                {payers.map(p => (
+                  <Fragment key={p.id}>
+                    <tr className="tr-row">
+                      <td className="td font-medium">{p.name}</td>
+                      <td className="td text-right text-gray-400">{p.items.length}</td>
+                      <td className="td text-right font-semibold text-white whitespace-nowrap">{formatEur(p.total)}</td>
+                      <td className="td text-right">
+                        <button
+                          onClick={() => setOpenId(openId === p.id ? null : p.id)}
+                          className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                        >
+                          {openId === p.id ? 'Zuklappen' : 'Details'}
+                        </button>
+                      </td>
+                    </tr>
+                    {openId === p.id && (
+                      <tr className="bg-forest-800/40">
+                        <td colSpan={4} className="px-4 py-3">
+                          <ul className="space-y-1 text-xs">
+                            {p.items.map(i => (
+                              <li key={i.id} className="flex justify-between gap-3">
+                                <span className="text-gray-300">
+                                  {i.name}
+                                  <span className="text-gray-600"> · {categoryName(i.category_id)}</span>
+                                </span>
+                                <span className="text-gray-400 whitespace-nowrap tabular-nums">{formatEur(i.amount)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-forest-800/60">
+                  <td colSpan={2} className="td font-semibold text-green-400">Summe Auslagen</td>
+                  <td className="td text-right font-bold text-white">{formatEur(payersTotal)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {unassigned.length > 0 && (
+          <p className="text-xs text-yellow-400">
+            {unassigned.length} Position{unassigned.length === 1 ? '' : 'en'} über {formatEur(unassignedTotal)} ohne
+            Zuordnung — dort ist noch offen, wer bezahlt hat.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Kategorien verwalten ────────────────────────────────────────────────────
+
+function CategoryManager({
+  categories,
+  costItems,
+  onRefresh,
+}: {
+  categories: CostCategory[]
+  costItems: CostItem[]
+  onRefresh: () => void
+}) {
+  const [newName, setNewName] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const addCategory = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true); setError('')
+    const { error: err } = await supabase
+      .from('cost_categories')
+      .insert({ name: newName.trim(), sort_order: categories.length })
+    setBusy(false)
+    if (err) {
+      setError(err.code === '23505' ? 'Diese Kategorie gibt es schon' : err.message)
+      return
+    }
+    setNewName('')
+    onRefresh()
+  }
+
+  const renameCategory = async (id: string, name: string) => {
+    const next = name.trim()
+    if (!next) return
+    await supabase.from('cost_categories').update({ name: next }).eq('id', id)
+    onRefresh()
+  }
+
+  const deleteCategory = async (id: string) => {
+    // FK ist ON DELETE SET NULL: Positionen bleiben erhalten, verlieren nur die Kategorie.
+    await supabase.from('cost_categories').delete().eq('id', id)
+    onRefresh()
+  }
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">Kategorien</h3>
+      </div>
+      <div className="card-body">
+        <form onSubmit={addCategory} className="flex flex-col sm:flex-row gap-3">
+          <input
+            placeholder="Neue Kategorie (z. B. Getränke)"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            required
+            className="input-sm flex-1"
+          />
+          <button type="submit" disabled={busy} className="btn-primary whitespace-nowrap px-4 py-2 text-sm">
+            + Kategorie
+          </button>
+        </form>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+
+        {categories.length === 0 ? (
+          <p className="text-sm text-gray-500">Noch keine Kategorien</p>
+        ) : (
+          <ul className="divide-y divide-forest-700/60">
+            {categories.map(c => {
+              const used = costItems.filter(i => i.category_id === c.id).length
+              return (
+                <li key={c.id} className="flex items-center gap-3 py-2">
+                  <input
+                    defaultValue={c.name}
+                    onBlur={e => { if (e.target.value.trim() !== c.name) renameCategory(c.id, e.target.value) }}
+                    className="input-sm flex-1 py-1"
+                  />
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                    {used} Position{used === 1 ? '' : 'en'}
+                  </span>
+                  <button
+                    onClick={() => deleteCategory(c.id)}
+                    className="text-gray-600 hover:text-red-400 transition-colors text-xs"
+                  >
+                    Löschen
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 // ─── Config Tab ──────────────────────────────────────────────────────────────
 

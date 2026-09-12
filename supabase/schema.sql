@@ -40,13 +40,31 @@ create table public.festival_config (
   constraint single_row check (id = 1)
 );
 
+create table public.cost_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- Kategorienamen sind case-insensitive eindeutig
+create unique index cost_categories_name_unique
+  on public.cost_categories (lower(trim(name)));
+
 create table public.cost_items (
   id uuid primary key default gen_random_uuid(),
+  -- Bezeichnung der Position (z. B. "Sojaschnetzel"); die Kategorie hängt an category_id
   name text not null,
   amount numeric(10,2) not null default 0,
   description text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  category_id uuid references public.cost_categories(id) on delete set null,
+  -- wer die Position ausgelegt hat; null = noch offen
+  paid_by uuid references public.profiles(id) on delete set null
 );
+
+create index cost_items_category_id_idx on public.cost_items (category_id);
+create index cost_items_paid_by_idx     on public.cost_items (paid_by);
 
 create table public.participant_payments (
   id uuid primary key default gen_random_uuid(),
@@ -111,6 +129,7 @@ create table public.legacy_credit_decisions (
 
 alter table public.profiles               enable row level security;
 alter table public.festival_config        enable row level security;
+alter table public.cost_categories        enable row level security;
 alter table public.cost_items             enable row level security;
 alter table public.participant_payments   enable row level security;
 alter table public.attendance             enable row level security;
@@ -570,6 +589,7 @@ create trigger on_auth_user_created
 
 grant select, insert, update, delete on public.profiles               to authenticated;
 grant select, insert, update, delete on public.festival_config        to authenticated;
+grant select, insert, update, delete on public.cost_categories        to authenticated;
 grant select, insert, update, delete on public.cost_items             to authenticated;
 grant select, insert, update, delete on public.participant_payments   to authenticated;
 grant select, insert, update, delete on public.attendance             to authenticated;
@@ -606,6 +626,11 @@ create policy "config_insert_admin" on public.festival_config for insert to auth
 create policy "config_update_admin" on public.festival_config for update to authenticated using (public.is_admin()) with check (public.is_admin());
 
 -- Cost Items
+create policy "cost_categories_select_auth"  on public.cost_categories for select to authenticated using (true);
+create policy "cost_categories_insert_admin" on public.cost_categories for insert to authenticated with check (public.is_admin());
+create policy "cost_categories_update_admin" on public.cost_categories for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "cost_categories_delete_admin" on public.cost_categories for delete to authenticated using (public.is_admin());
+
 create policy "costs_select_auth"  on public.cost_items for select to authenticated using (true);
 create policy "costs_insert_admin" on public.cost_items for insert to authenticated with check (public.is_admin());
 create policy "costs_update_admin" on public.cost_items for update to authenticated using (public.is_admin()) with check (public.is_admin());
